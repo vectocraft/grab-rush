@@ -11,6 +11,8 @@
 //   • floor decals   — cracks and scorch marks that fade out.
 //   • lightning      — jagged camera-facing ribbons that re-jitter while they live (two-colour gradient, white core).
 //   • shake          — camera trauma: fx.shake(k), then fx.shakeOffset() gives an offset to add to the camera.
+// V2 presets: ring (flat spark ring), star (big flare), frost (ice burst + ice chunks), heal (rising spiral), charge
+// (motes rushing in: spell wind-up), spiral (rising helix), flake (one slow falling flake for elemental trails).
 // High-level presets (muzzle, impact, trail, explosion, chain, crack, ...) build on those.
 (function () {
   'use strict';
@@ -441,6 +443,50 @@
           g.tick = t => { r1.rotation.y = t * 0.6; r2.scale.setScalar(1 + 0.04 * Math.sin(t * 5)); ringM.opacity = 0.65 + 0.3 * Math.sin(t * 5); glowM.opacity = 0.4 + 0.12 * Math.sin(t * 3); };
           scene.add(g); return g;
         },
+        // ---- V2 presets (Arrow Legends skill/element effects; all built from the same pooled parts) ----
+        // A ring of sparks flying out flat along the floor (shockwave edge, skill pick, level up).
+        ring(x, y, z, color, r, n, color2) {
+          const R = (r || 4) * U, N = n || 24;
+          for (let k = 0; k < N; k++) { const b = k / N * TAU + rnd(-0.08, 0.08), v = R * rnd(2.2, 3.2); E(x + Math.sin(b) * 0.3 * U, y, z + Math.cos(b) * 0.3 * U, Math.sin(b) * v, rnd(0.2, 1.2) * U, Math.cos(b) * v, rnd(0.25, 0.45), 0.34 * U, 0.08 * U, k % 3 || !color2 ? color : color2, 1, 0, 3, 0.03, 2); }
+        },
+        // Big star flare (crit, pick-up, boss roar): a ray star over a soft glow.
+        star(x, y, z, color, size, life) {
+          const s = (size || 4) * U, l = life || 0.3;
+          E(x, y, z, 0, 0, 0, l, s * 0.5, s, color, 1, 0, 0, 0, 1);
+          E(x, y, z, 0, 0, 0, l * 0.6, s * 0.35, s * 0.15, '#ffffff', 1, 0, 0, 0, 2);
+          E(x, y, z, 0, 0, 0, l * 1.4, s * 0.6, s * 1.3, color, 0.4, 0, 0, 0, 0);
+        },
+        // Ice: a white-blue flash, tumbling ice chunks (lit solids), drifting snowflakes and a cold mist.
+        frost(x, y, z, power) {
+          const p = power || 1;
+          E(x, y, z, 0, 0, 0, 0.22, 2.4 * U * p, 4.2 * U * p, '#9fe8ff', 1, 0, 0, 0, 1);
+          E(x, y, z, 0, 0, 0, 0.12, 1.4 * U * p, 0.5 * U * p, '#ffffff', 1, 0, 0, 0, 2);
+          for (let k = 0; k < Math.round(7 * p); k++) { const b = Math.random() * TAU, v = rnd(3, 8) * U * Math.sqrt(p); rk.emit(x, y, z, Math.sin(b) * v, rnd(4, 10) * U, Math.cos(b) * v, rnd(0.7, 1.1), rnd(0.12, 0.24) * U * Math.sqrt(p), k % 2 ? '#d8f6ff' : '#8fd4ff', 24 * U); }
+          for (let k = 0; k < Math.round(14 * p); k++) { const b = Math.random() * TAU, v = rnd(3, 11) * U; E(x, y, z, Math.sin(b) * v, rnd(1, 6) * U, Math.cos(b) * v, rnd(0.25, 0.5), 0.3 * U, 0.06 * U, k % 2 ? '#bff4ff' : '#ffffff', 1, 10 * U, 3, 0.025, 2); }
+          for (let k = 0; k < Math.round(8 * p); k++) E(x + rnd(-1, 1) * U, y + rnd(0, 1.5) * U, z + rnd(-1, 1) * U, rnd(-0.6, 0.6) * U, rnd(-0.8, -0.2) * U, rnd(-0.6, 0.6) * U, rnd(0.9, 1.6), 0.34 * U, 0.12 * U, '#e8fbff', 0.9, 0, 0.5, 0, 1);
+          for (let k = 0; k < Math.round(4 * p); k++) E(x + rnd(-0.6, 0.6) * U, y * 0.5, z + rnd(-0.6, 0.6) * U, rnd(-1, 1) * U, rnd(0.2, 0.6) * U, rnd(-1, 1) * U, rnd(0.7, 1.1), 1.2 * U * p, 3 * U * p, '#9fd8ff', 0.25, 0, 1.5, 0, 3);
+        },
+        // Healing: soft green motes and little stars spiralling up around a column.
+        heal(x, z, color, power, color2) {
+          const p = power || 1, c2 = color2 || '#ffffff';
+          for (let k = 0; k < Math.round(18 * p); k++) { const a = k / (18 * p) * TAU * 2, r = rnd(0.6, 1.3) * U; E(x + Math.sin(a) * r, rnd(0.1, 0.6) * U, z + Math.cos(a) * r, Math.cos(a) * 1.5 * U, rnd(2.5, 5) * U, -Math.sin(a) * 1.5 * U, rnd(0.7, 1.2), 0.5 * U, 0.15 * U, k % 3 ? color : c2, 1, 0, 0.8, 0, k % 4 ? 0 : 1); }
+          E(x, 1.2 * U, z, 0, 0, 0, 0.5, 2.5 * U * p, 4.5 * U * p, color, 0.5, 0, 0, 0, 0);
+        },
+        // Charge-up: motes start on a sphere of radius r and rush into the centre (spell wind-up).
+        charge(x, y, z, color, r, n, life, color2) {
+          const R = (r || 2) * U, l = life || 0.35;
+          for (let k = 0; k < (n || 10); k++) {
+            const a = Math.random() * TAU, b = Math.acos(rnd(-1, 1)), dx = Math.sin(b) * Math.sin(a), dy = Math.cos(b), dz = Math.sin(b) * Math.cos(a);
+            E(x + dx * R, y + dy * R * 0.7, z + dz * R, -dx * R / l, -dy * R * 0.7 / l, -dz * R / l, l, 0.32 * U, 0.12 * U, k % 2 && color2 ? color2 : color, 1, 0, 0, 0.03, 2);
+          }
+        },
+        // A rising helix of glows (pillar of light, level up, boss summon).
+        spiral(x, z, color, r, h, n, color2) {
+          const R = (r || 1.2) * U, H = (h || 5) * U, N = n || 24;
+          for (let k = 0; k < N; k++) { const t = k / N, a = t * TAU * 2.5; E(x + Math.sin(a) * R, t * H * 0.3, z + Math.cos(a) * R, Math.cos(a) * R * 2, H * rnd(0.8, 1.2), -Math.sin(a) * R * 2, rnd(0.6, 0.9), 0.42 * U, 0.1 * U, k % 2 && color2 ? color2 : color, 1, 0, 1.2, 0, k % 3 ? 2 : 1); }
+        },
+        // One slow falling snowflake / spore / leaf (trails of ice and poison arrows).
+        flake(x, y, z, color, size, life) { E(x, y, z, rnd(-0.6, 0.6) * U, rnd(-1.4, -0.4) * U, rnd(-0.6, 0.6) * U, life || 0.7, (size || 0.32) * U, 0.05 * U, color, 0.95, 0, 0.6, 0, 1); },
         clear() { glow.clear(); },
         setBudget(n) { BUDGET = n; },
         // Draw every part once, fully transparent, somewhere on screen: drivers (and SwiftShader) build the pipeline

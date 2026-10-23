@@ -288,7 +288,7 @@
       const dyn = new T.Group(); scene.add(dyn);
       // Shared effect system (ortak/fx3d.js): GPU sparks, bow flashes, arrow light trails, stone chips, floor cracks,
       // chain lightning, camera shake and the hero's rune aura. Everything pooled; nothing allocated per hit.
-      const F3 = window.Fx3D ? Fx3D.create(scene, { unit: 1, particles: 1400, rocks: 80, decals: 16, bolts: 12 }) : null;
+      const F3 = window.Fx3D ? Fx3D.create(scene, { unit: 1, particles: 2600, rocks: 140, decals: 24, bolts: 16, budget: 700 }) : null;
       const heroAura = F3 ? F3.aura('#46e0ff', 3.4) : null; if (heroAura) heroAura.visible = false;
       let rockCol = '#4a4650', runes = [], muzzleT = 0;
       // Boss spotlight: a pulsing red-violet pool under the boss and a shaft of light from above (additive, no light).
@@ -302,13 +302,18 @@
       // ---------- Characters (morph-blended poses) ----------
       const charMats = {};
       // Three-step cel ramp (Archero-style shading) and one shared outline material.
-      const toonRamp = new T.DataTexture(new Uint8Array([150, 150, 150, 255, 205, 205, 205, 255, 255, 255, 255, 255]), 3, 1);
+      const toonRamp = new T.DataTexture(new Uint8Array([128, 128, 128, 255, 208, 208, 208, 255, 255, 255, 255, 255]), 3, 1);
       toonRamp.minFilter = toonRamp.magFilter = T.NearestFilter; toonRamp.needsUpdate = true;
       const outlineMat = new T.MeshBasicMaterial({ color: 0x1b0f08, side: T.BackSide });
-      outlineMat.onBeforeCompile = sh => { sh.vertexShader = sh.vertexShader.replace('#include <morphtarget_vertex>', '#include <morphtarget_vertex>\n  transformed += normal * 0.035;'); };
+      outlineMat.onBeforeCompile = sh => { sh.vertexShader = sh.vertexShader.replace('#include <morphtarget_vertex>', '#include <morphtarget_vertex>\n  transformed += normal * 0.05;'); };
+      // Key-art look (docs/art-target): a cool rim light and a little extra colour saturation on every character, patched
+      // into the toon shader (no extra light, one shared program).
+      const RIM_GLSL = 'float rimK = pow(1.0 - abs(dot(normalize(normal), normalize(vViewPosition))), 2.6);\n' +
+        '  gl_FragColor.rgb = mix(vec3(dot(gl_FragColor.rgb, vec3(0.299, 0.587, 0.114))), gl_FragColor.rgb, 1.22) + vec3(0.42, 0.72, 1.0) * rimK * 0.36;\n#include <dithering_fragment>';
+      const charLook = m => { m.onBeforeCompile = sh => { sh.fragmentShader = sh.fragmentShader.replace('#include <dithering_fragment>', RIM_GLSL); }; m.customProgramCacheKey = () => 'charLook'; return m; };
       function charMesh(name, scale, opts) {
         const u = window.ARROW_CHARS.chars[name];
-        const mat = opts ? new T.MeshToonMaterial(Object.assign({ map: charTex(u.tex), gradientMap: toonRamp }, opts)) : (charMats[u.tex] || (charMats[u.tex] = new T.MeshToonMaterial({ map: charTex(u.tex), gradientMap: toonRamp }))).clone();
+        const mat = charLook(opts ? new T.MeshToonMaterial(Object.assign({ map: charTex(u.tex), gradientMap: toonRamp }, opts)) : (charMats[u.tex] || (charMats[u.tex] = new T.MeshToonMaterial({ map: charTex(u.tex), gradientMap: toonRamp }))).clone());
         if (mat.map && mat.map.anisotropy !== Math.min(8, maxAniso)) { mat.map.anisotropy = Math.min(8, maxAniso); const im = mat.map.image; if (im && (im.complete === undefined || (im.complete && im.naturalWidth))) mat.map.needsUpdate = true; }
         const m = new T.Mesh(charGeo(name), mat); m.scale.setScalar(scale || 1); m.castShadow = true;
         if (m.updateMorphTargets) m.updateMorphTargets();
@@ -576,16 +581,130 @@
       const haloS = new T.Mesh(new T.TorusGeometry(0.42, 0.06, 8, 32).rotateX(Math.PI / 2), new T.MeshBasicMaterial(Object.assign({ color: '#ffe08a' }, add))); haloS.visible = false; scene.add(haloS);
       const giantS = new T.Sprite(new T.SpriteMaterial(Object.assign({ map: glowTex, color: '#ff4a2a' }, add))); giantS.visible = false; scene.add(giantS);
       const meteorS = new T.Sprite(new T.SpriteMaterial(Object.assign({ map: glowTex, color: '#ff8a2a' }, add))); meteorS.visible = false; scene.add(meteorS);
+      // ---------- V2 effect layer ----------
+      // Frost rings: the frost rune circle laid on the floor, growing and fading (ice hits, frozen foes, Freeze pick).
+      const frostRings = [], frostPool = [];
+      function frostRing(x, z, size, life) {
+        if (frostRings.length > 24) return;
+        const m = frostPool.pop() || new T.Mesh(new T.PlaneGeometry(2, 2).rotateX(-Math.PI / 2), new T.MeshBasicMaterial(Object.assign({ map: frostTex, color: '#b8ecff' }, add)));
+        m.visible = true; m.position.set(x, 0.1, z); m.rotation.y = Math.random() * 6; m.renderOrder = 3; if (!m.parent) scene.add(m);
+        frostRings.push({ m, life, max: life, size });
+      }
+      // Frozen foes: ice shell, crystals at the feet and a frost disc (shared by every frozen foe).
+      const ICE = { shell: new T.IcosahedronGeometry(0.75, 0), shellM: new T.MeshLambertMaterial({ color: '#cdf3ff', emissive: '#3a9ad0', transparent: true, opacity: 0.45, flatShading: true, depthWrite: false }),
+        cry: new T.ConeGeometry(0.15, 0.85, 5).translate(0, 0.42, 0), cryM: new T.MeshLambertMaterial({ color: '#e8f8ff', emissive: '#4fb4ff', emissiveIntensity: 0.7, transparent: true, opacity: 0.92, flatShading: true }),
+        disc: new T.PlaneGeometry(2.8, 2.8).rotateX(-Math.PI / 2), discM: new T.MeshBasicMaterial(Object.assign({ map: frostTex, color: '#b8ecff', opacity: 0.75 }, add)) };
+      let nRune = 0, frameN = 0;
+      // Rune circles under casters (enemy wizards and bosses winding up a spell): pooled, one per caster.
+      const runeTexV2 = window.Fx3D ? Fx3D.tex.rune() : ringTex;
+      const castRunes = pool(() => { const m = new T.Mesh(new T.PlaneGeometry(1, 1).rotateX(-Math.PI / 2), new T.MeshBasicMaterial(Object.assign({ map: runeTexV2, color: '#c77dff' }, add))); m.renderOrder = 3; return m; });
+      // The hero's hands: a charging orb for the mage, speed motes for attack speed, an ember glow for attack boosts.
+      const chargeS = new T.Sprite(new T.SpriteMaterial(Object.assign({ map: glowTex, color: '#c48bff' }, add))); chargeS.visible = false; scene.add(chargeS);
+      const speedS = [0, 1].map(() => { const sp = new T.Sprite(new T.SpriteMaterial(Object.assign({ map: glowTex, color: '#ffe27a' }, add))); sp.visible = false; scene.add(sp); return sp; });
+      const powerS = new T.Sprite(new T.SpriteMaterial(Object.assign({ map: glowTex, color: '#ff5a2a' }, add))); powerS.visible = false; scene.add(powerS);
+      // A rune aura under the living boss in its crew colour (on top of the red-violet spotlight).
+      const bossAura = F3 ? F3.aura('#ff3a5a', 7) : null; if (bossAura) bossAura.visible = false;
+      // Every skill shows its own effect the moment it is picked (style, main colour, second colour); several also keep
+      // a visible mark while they are active (see the hero section of render()).
+      const SKILL_FX = {
+        front: ['arrows', '#9ff0ff', '#ffffff'], multi: ['arrows', '#ffd27a', '#ffffff'], diag: ['arrows', '#7dffae', '#ffffff'], side: ['arrows', '#ff9ad8', '#ffffff'],
+        rear: ['arrows', '#c9a2ff', '#ffffff'], pierce: ['arrows', '#ffffff', '#9ff0ff'], rain: ['arrows', '#fff1a8', '#ffb347'],
+        ricochet: ['bounce', '#5fe0ff', '#ffffff'], wall: ['bounce', '#ffb347', '#ffffff'], blades: ['bounce', '#dfefff', '#9fd8ff'],
+        atk: ['power', '#ff4a2a', '#ffd23f'], atkS: ['power', '#eaf6ff', '#9fd8ff'], giant: ['power', '#ff4a2a', '#ffd23f'], rage: ['power', '#ff2a1a', '#ff8a3a'],
+        spd: ['speed', '#ffe27a', '#ffffff'], spdS: ['speed', '#ffe27a', '#fff6c8'],
+        crit: ['star', '#ffd23f', '#ff5a3a'], headshot: ['target', '#ff3a3a', '#ffd23f'], execute: ['dark', '#c08cff', '#5a1a8a'],
+        hp: ['heal', '#ffcf5a', '#fff3c0'], hpS: ['heal', '#ffcf5a', '#ffffff'], potion: ['heal', '#ff8ab0', '#ffffff'], vamp: ['heal', '#ff2a4a', '#ff8a95'],
+        fire: ['fire', '#ff7a1a', '#ffd23f'], trail: ['fire', '#ff5a10', '#ffc23a'], orbit: ['fire', '#ff7a1a', '#ffd23f'], meteor: ['fire', '#ff5a10', '#ffd23f'],
+        ice: ['ice', '#8fe6ff', '#ffffff'], frostaura: ['ice', '#8fd4ff', '#ffffff'], bolt: ['bolt', '#c77dff', '#7dff4a'], poison: ['poison', '#7dff4a', '#b6ff5a'],
+        nova: ['arcane', '#b36bff', '#ffffff'], split: ['arcane', '#d7a8ff', '#5fe0ff'], shield: ['shield', '#8fd8ff', '#ffffff'],
+        dodge: ['wind', '#e2f4ff', '#bff0ff'], move: ['wind', '#9ff0ff', '#ffffff'], boots: ['wind', '#e2f4ff', '#ffffff'],
+        greed: ['gold', '#ffd23f', '#fff3a0'], wisdom: ['xp', '#6fb8ff', '#d8ecff'], second: ['holy', '#ffe08a', '#ffffff'],
+      };
+      function skillFx(key, x, z) {
+        const d = SKILL_FX[key] || ['star', '#ffffff', '#ffd23f'], st = d[0], c1 = d[1], c2 = d[2], face = level && level.p ? level.p.face : 0;
+        ring(x, z, c1, 5.5, 0.5); flare(x, 1.6, z, c1, 8, 0.35);
+        if (F3) { F3.ring(x, 0.5, z, c1, 2.6, 30, c2); F3.star(x, 2.2, z, c1, 5, 0.45); F3.spiral(x, z, c1, 1.1, 4, 18, c2); }
+        if (st === 'arrows' && F3) for (let k = -4; k <= 4; k++) { const a = face + k * 0.16, v = rnd(16, 24); F3.emit(x + Math.sin(a), 1.4, z + Math.cos(a), Math.sin(a) * v, 0.4, Math.cos(a) * v, 0.38, 0.45, 0.12, k % 2 ? c1 : c2, 1, 0, 1.2, 0.05, 2); }
+        else if (st === 'bounce') { for (let k = 0; k < 4; k++) { const a = k / 4 * Math.PI * 2 + 0.4; flare(x + Math.sin(a) * 2.2, 1.2, z + Math.cos(a) * 2.2, c1, 3, 0.25); } if (F3) F3.chips(x, z, 6, rockCol, 1); }
+        else if (st === 'power') { for (let k = 0; k < 40; k++) { const a = k / 40 * Math.PI * 2; emit(flamesC, x + Math.sin(a) * 1.1, 0.3, z + Math.cos(a) * 1.1, Math.sin(a) * 0.6, rnd(3, 7), Math.cos(a) * 0.6, rnd(0.4, 0.7), k % 3 ? c1 : c2, -2); } }
+        else if (st === 'speed') { if (F3) { F3.spiral(x, z, c1, 1.6, 6, 30, c2); F3.ring(x, 1.2, z, c1, 1.6, 20); } ring(x, z, c2, 3.5, 0.3); }
+        else if (st === 'star') { if (F3) { F3.star(x, 2.4, z, c1, 9, 0.5); F3.star(x, 2.4, z, c2, 5, 0.3); } }
+        else if (st === 'target') { if (F3) F3.charge(x, 1.4, z, c1, 3.5, 24, 0.3, c2); ring(x, z, c1, 3, 0.4); ring(x, z, c1, 6, 0.6); }
+        else if (st === 'dark') { if (F3) F3.charge(x, 1.6, z, c1, 3, 26, 0.4, c2); for (let k = 0; k < 6; k++) emit(puffs, x + rnd(-1, 1), 0.8, z + rnd(-1, 1), rnd(-0.6, 0.6), rnd(0.8, 1.6), rnd(-0.6, 0.6), 0.9, '#3a1a5a'); }
+        else if (st === 'heal') { if (F3) F3.heal(x, z, c1, 1.6, c2); }
+        else if (st === 'fire') fx('ignite', x, z);
+        else if (st === 'ice') { if (F3) F3.frost(x, 1.4, z, 1.6); frostRing(x, z, 4.5, 0.9); shatter(x, z, 10, '#cdf3ff'); }
+        else if (st === 'bolt') { if (F3) { F3.bolt(x + 1, 14, z - 1, x, 0.3, z, { w: 0.7, colA: c1, colB: c2, branches: 3, life: 0.3 }); F3.crack(x, z, 3, 1.6, 1, 0.5); } screenFlash('rgba(200,150,255,.45)', 0.4); }
+        else if (st === 'poison') { for (let k = 0; k < 16; k++) emit(puffs, x + rnd(-1.4, 1.4), 0.5, z + rnd(-1.4, 1.4), rnd(-0.6, 0.6), rnd(0.6, 1.4), rnd(-0.6, 0.6), rnd(0.8, 1.2), k % 2 ? '#3ad12a' : '#1f7a1a'); if (F3) for (let k = 0; k < 12; k++) F3.flake(x + rnd(-1.5, 1.5), rnd(0.2, 1), z + rnd(-1.5, 1.5), c2, 0.4, 1); }
+        else if (st === 'arcane') { if (F3) { F3.charge(x, 1.6, z, c1, 3, 24, 0.35, c2); F3.ring(x, 0.6, z, c1, 4, 36, c2); } ring(x, z, c1, 9, 0.5); }
+        else if (st === 'shield') { if (F3) F3.star(x, 1.6, z, c1, 8, 0.45); shatter(x, z, 6, '#dff6ff'); }
+        else if (st === 'wind') { for (let k = 0; k < 24; k++) { const a = k / 24 * Math.PI * 2; emit(puffs, x + Math.sin(a), 0.4, z + Math.cos(a), Math.sin(a) * 4, 0.5, Math.cos(a) * 4, 0.5, c1); } }
+        else if (st === 'gold') { for (let k = 0; k < 40; k++) { const a = Math.random() * Math.PI * 2, v = rnd(2, 6); emit(sparks, x, 1.6, z, Math.sin(a) * v, rnd(6, 11), Math.cos(a) * v, rnd(0.8, 1.3), k % 2 ? c1 : c2, 18); } }
+        else if (st === 'xp') { if (F3) F3.spiral(x, z, c1, 0.9, 7, 30, c2); }
+        else if (st === 'holy') { const b = beamPool.pop() || new T.Mesh(lvBeamGeo, new T.MeshBasicMaterial(Object.assign({ map: beamTex, color: '#9dffc9', side: T.DoubleSide }, add))); b.material.color.set(c1); b.visible = true; b.position.set(x, 0, z); if (!b.parent) scene.add(b); beams.push({ m: b, life: 0.9, follow: true }); }
+        screenFlash(c1, 0.22);
+      }
+      // Bosses: each one carries a rig of its own (orbiting bones, bubbles, spores, lava crystals and fire wings, an ice
+      // crown, floating rocks) so it reads as a unique creature, not a scaled-up foe. Guardians: crew-coloured crystals.
+      const rigGeo = { bone: new T.BoxGeometry(0.16, 0.16, 0.9), bub: new T.SphereGeometry(0.26, 10, 8), cry: new T.OctahedronGeometry(0.28, 0).scale(1, 2.4, 1), rock: new T.DodecahedronGeometry(0.42, 0) };
+      function bossRig(g, e) {
+        const geo = g.userData.m.geometry; if (!geo.boundingBox) geo.computeBoundingBox();
+        const hy = geo.boundingBox.max.y * g.userData.m.scale.y, R = new T.Group(), items = [], look = (!e.mid && e.kind) || 'guard';
+        const crew = CREW_C[(e.crew || 0) % 6];
+        const sp = (c, s) => { const o = new T.Sprite(new T.SpriteMaterial(Object.assign({ map: glowTex, color: c }, add))); o.scale.setScalar(s); return o; };
+        const put = (mesh, k, n, r, y, spin, glowC) => { const o = new T.Group(); o.add(mesh); if (glowC) o.add(sp(glowC, 1.2)); R.add(o); items.push({ o, a: k / n * Math.PI * 2, r, y, spin }); return o; };
+        if (look === 'warrior') { const bm = new T.MeshLambertMaterial({ color: '#f1ead8', emissive: '#3a2a5a' }); for (let k = 0; k < 6; k++) put(new T.Mesh(rigGeo.bone, bm), k, 6, hy * 0.42, hy * 0.55, 1.4, '#9a5cff');
+          for (const sx of [-1, 1]) { const f = sp('#b36bff', hy * 0.28); f.position.set(sx * hy * 0.2, hy * 0.78, 0); R.add(f); items.push({ o: f, fire: true }); } }
+        else if (look === 'glubx') { const wm = new T.MeshLambertMaterial({ color: '#7fe8ff', emissive: '#0a5a7a', transparent: true, opacity: 0.55 }); for (let k = 0; k < 8; k++) put(new T.Mesh(rigGeo.bub, wm), k, 8, hy * 0.45, hy * 0.35, 0.8, '#3affef'); }
+        else if (look === 'mushking') { for (let k = 0; k < 7; k++) put(new T.Mesh(rigGeo.bub, bmat('#a8ff5a')), k, 7, hy * 0.4, hy * 0.6, 0.6, '#8aff4a'); }
+        else if (look === 'dragonx') { const lm = new T.MeshLambertMaterial({ color: '#ff8a2a', emissive: '#ff4a00', emissiveIntensity: 0.9 }); for (let k = 0; k < 5; k++) put(new T.Mesh(rigGeo.cry, lm), k, 5, hy * 0.45, hy * 0.5, 2, '#ff6a10');
+          // Fire wings: two big additive flame sheets behind the shoulders that flap.
+          const wt = new T.MeshBasicMaterial(Object.assign({ map: glowTex, color: '#ff5a10', side: T.DoubleSide, opacity: 0.75 }, add));
+          for (const sx of [-1, 1]) { const w = new T.Mesh(new T.PlaneGeometry(hy * 0.9, hy * 0.55).translate(sx * hy * 0.45, 0, 0), wt); const pv = new T.Group(); pv.position.set(sx * hy * 0.1, hy * 0.72, -hy * 0.12); pv.add(w); R.add(pv); items.push({ o: pv, wing: sx }); } }
+        else if (look === 'alpakingx') { const im = new T.MeshLambertMaterial({ color: '#e8f8ff', emissive: '#4fb4ff', emissiveIntensity: 0.6, transparent: true, opacity: 0.9 }); for (let k = 0; k < 7; k++) put(new T.Mesh(rigGeo.cry, im), k, 7, hy * 0.22, hy * 1.08, 1.1, '#8fe6ff'); }
+        else if (look === 'golex') { const rm = new T.MeshLambertMaterial({ color: '#7a7470', emissive: '#0a4a5a', flatShading: true }); for (let k = 0; k < 6; k++) put(new T.Mesh(rigGeo.rock, rm), k, 6, hy * 0.5, hy * 0.45, 0.5, '#5ff3ff'); }
+        else { const cm = new T.MeshLambertMaterial({ color: crew, emissive: crew, emissiveIntensity: 0.5 }); for (let k = 0; k < 3; k++) put(new T.Mesh(rigGeo.cry, cm), k, 3, hy * 0.42, hy * 0.6, 1.3, crew); }
+        // The rig hangs on the boss but does not turn with its facing.
+        g.add(R); g.userData.rig = { R, items, hy, look };
+      }
+      // Build the shader programs of the V2 effects once, at the first room (a first frozen foe or rune circle used to
+      // compile mid-fight: a ~1 s hitch in the benchmark).
+      function warmV2(S) {
+        const tmp = new T.Group(); tmp.position.set(S.p.x, -50, S.p.z);
+        tmp.add(new T.Mesh(ICE.shell, ICE.shellM), new T.Mesh(ICE.cry, ICE.cryM), new T.Mesh(ICE.disc, ICE.discM), new T.Mesh(rigGeo.bone, new T.MeshLambertMaterial({ color: '#ffffff', emissive: '#222222' })),
+          new T.Mesh(rigGeo.bub, new T.MeshLambertMaterial({ color: '#ffffff', transparent: true, opacity: 0.5 })), new T.Mesh(rigGeo.rock, new T.MeshLambertMaterial({ color: '#ffffff', flatShading: true })),
+          new T.Mesh(rigGeo.cry, new T.MeshLambertMaterial({ color: '#ffffff', transparent: true, opacity: 0.9 })), new T.Mesh(rigGeo.cry, new T.MeshBasicMaterial(Object.assign({ map: glowTex, side: T.DoubleSide }, add))));
+        scene.add(tmp); frostRing(S.p.x, S.p.z, 0.01, 0.01); castRunes.get(0);
+        const shown = [chargeS, powerS, ...speedS, bossAura].filter(o => o && !o.visible); shown.forEach(o => { o.visible = true; });
+        const dv = dyn.visible; dyn.visible = true;
+        try { renderer.compile(scene, camera); } catch (e) { }
+        dyn.visible = dv; shown.forEach(o => { o.visible = false; }); castRunes.hide(0); scene.remove(tmp);
+      }
+      function tickRig(g, e, time, dt) {
+        const rg = g.userData.rig; if (!rg) return;
+        rg.R.rotation.y = -g.rotation.y; rg.R.visible = e.hp > 0;
+        const rage = e.rage ? 1.8 : 1;
+        for (const it of rg.items) {
+          if (it.fire) { it.o.scale.setScalar(rg.hy * (0.26 + 0.06 * Math.sin(time * 14 + it.o.position.x))); if (Math.random() < dt * 14) { const w = it.o.getWorldPosition(wv); emit(flamesC, w.x, w.y, w.z, 0, rnd(1, 2), 0, 0.4, '#9a5cff', -2); } continue; }
+          if (it.wing) { it.o.rotation.y = it.wing * (0.35 + 0.35 * Math.sin(time * 5 * rage)); it.o.children[0].material.opacity = 0.55 + 0.2 * Math.sin(time * 9); if (Math.random() < dt * 20) { const w = it.o.getWorldPosition(wv); emit(flamesC, w.x + it.wing * rnd(0, rg.hy * 0.8), w.y + rnd(-0.5, 0.5), w.z, 0, rnd(1, 3), 0, 0.4, Math.random() < 0.5 ? '#ff5a10' : '#ffd23f', -2); } continue; }
+          const a = it.a + time * it.spin * rage;
+          it.o.position.set(Math.sin(a) * it.r, it.y + Math.sin(time * 2.2 + it.a) * rg.hy * 0.06, Math.cos(a) * it.r);
+          it.o.rotation.set(time * 1.3 + it.a, a, time * 0.7);
+        }
+        if (rg.look === 'mushking' && Math.random() < dt * 6) emit(puffs, e.x + rnd(-1.5, 1.5), rnd(0.5, rg.hy), e.z + rnd(-1.5, 1.5), 0, 0.6, 0, 1.2, '#4a8a2a');
+        if (rg.look === 'glubx' && F3 && Math.random() < dt * 10) F3.mote(e.x + rnd(-1.5, 1.5), 0.3, e.z + rnd(-1.5, 1.5), '#7fe8ff', 0.25, 1.4, 1.6);
+      }
       function fx(kind, x, z, color, n) {
         n = n || 10; color = color || '#ffe9a8';
-        if (kind === 'hit') { for (let k = 0; k < n; k++) emit(sparks, x, 1.4, z, rnd(-6, 6), rnd(1, 7), rnd(-6, 6), rnd(0.2, 0.45), color, 14); flare(x, 1.4, z, color, 2.6, 0.16); if (F3) F3.impact(x, 1.4, z, color, n > 10 ? 1 : 0.7, n > 10 ? 3 : 2, rockCol); }
+        if (kind === 'hit') { for (let k = 0; k < n * 2; k++) emit(sparks, x, 1.4, z, rnd(-7, 7), rnd(1, 8), rnd(-7, 7), rnd(0.2, 0.5), color, 14); flare(x, 1.4, z, color, 3.8, 0.18); if (F3) { F3.impact(x, 1.4, z, color, n > 10 ? 1.4 : 1, n > 10 ? 4 : 2, rockCol); if (n > 10) F3.ring(x, 1.2, z, color, 1.4, 14); } }
         else if (kind === 'die') {
           if (F3) { F3.chips(x, z, n > 30 ? 14 : 6, rockCol, n > 30 ? 1.6 : 1.1); F3.crack(x, z, n > 30 ? 5 : 2.6, 2.6, 0, 0.75); F3.impact(x, 1.4, z, color, n > 30 ? 1.6 : 1, 0); F3.shake(n > 30 ? 0.5 : 0.12); }
-          flare(x, 1.4, z, color, 5, 0.3);
-          for (let k = 0; k < n; k++) emit(sparks, x + rnd(-0.6, 0.6), rnd(0.8, 2.2), z + rnd(-0.6, 0.6), rnd(-5, 5), rnd(3, 9), rnd(-5, 5), rnd(0.6, 1.1), k % 3 ? color : '#ffd23f', 18);
+          flare(x, 1.4, z, color, 7, 0.35);
+          if (F3) { F3.star(x, 1.6, z, color, n > 30 ? 9 : 4.5, 0.35); F3.ring(x, 0.8, z, color, n > 30 ? 4 : 2, n > 30 ? 40 : 18, '#ffd23f'); F3.spiral(x, z, '#e8e0ff', 0.5, 3, n > 30 ? 20 : 8, '#9fd8ff'); }
+          for (let k = 0; k < n * 1.5; k++) emit(sparks, x + rnd(-0.6, 0.6), rnd(0.8, 2.2), z + rnd(-0.6, 0.6), rnd(-5, 5), rnd(3, 9), rnd(-5, 5), rnd(0.6, 1.1), k % 3 ? color : '#ffd23f', 18);
           for (let k = 0; k < 6; k++) emit(puffs, x + rnd(-0.8, 0.8), 0.6, z + rnd(-0.8, 0.8), rnd(-1.2, 1.2), rnd(0.5, 1.5), rnd(-1.2, 1.2), rnd(0.5, 0.8), '#6a5a4a');
         } else if (kind === 'rise') for (let k = 0; k < 8; k++) { const a = k / 8 * Math.PI * 2; emit(puffs, x + Math.sin(a), 0.3, z + Math.cos(a), Math.sin(a) * 2, 0.8, Math.cos(a) * 2, 0.6, '#5a4a3a'); }
-        else if (kind === 'blink') { for (let k = 0; k < 18; k++) emit(sparks, x, rnd(0.3, 2.8), z, rnd(-3, 3), rnd(-1, 3), rnd(-3, 3), rnd(0.3, 0.7), '#c77dff'); emit(puffs, x, 1.4, z, 0, 0, 0, 0.5, '#9d4dff'); }
+        else if (kind === 'blink') { if (F3) { F3.star(x, 1.4, z, '#c77dff', 4.5, 0.3); F3.spiral(x, z, '#b04dff', 0.6, 3, 10, '#ffffff'); } for (let k = 0; k < 18; k++) emit(sparks, x, rnd(0.3, 2.8), z, rnd(-3, 3), rnd(-1, 3), rnd(-3, 3), rnd(0.3, 0.7), '#c77dff'); emit(puffs, x, 1.4, z, 0, 0, 0, 0.5, '#9d4dff'); }
         else if (kind === 'hurt') for (let k = 0; k < n; k++) emit(sparks, x, 1.5, z, rnd(-4, 4), rnd(1, 5), rnd(-4, 4), 0.35, color, 12);
         else if (kind === 'slam') { for (let k = 0; k < 30; k++) { const a = k / 30 * Math.PI * 2; emit(puffs, x + Math.sin(a) * 2, 0.4, z + Math.cos(a) * 2, Math.sin(a) * 9, 1, Math.cos(a) * 9, 0.6, '#8a7a6a'); }
           if (F3) { F3.crack(x, z, 7, 3.2, 0, 0.95); F3.chips(x, z, 16, rockCol, 1.8); F3.shake(0.55); } }
@@ -593,23 +712,27 @@
         else if (kind === 'levelup') {
           for (let k = 0; k < n; k++) { const a = Math.random() * Math.PI * 2, r = rnd(0.3, 1.4); emit(sparks, x + Math.sin(a) * r, rnd(0, 1), z + Math.cos(a) * r, 0, rnd(4, 9), 0, rnd(0.6, 1), color); }
           const b = beamPool.pop() || new T.Mesh(lvBeamGeo, new T.MeshBasicMaterial(Object.assign({ map: beamTex, color: '#9dffc9', side: T.DoubleSide }, add)));
-          b.visible = true; b.position.set(x, 0, z); if (!b.parent) scene.add(b); beams.push({ m: b, life: 0.9, follow: true });
+          b.material.color.set('#9dffc9'); b.visible = true; b.position.set(x, 0, z); if (!b.parent) scene.add(b); beams.push({ m: b, life: 0.9, follow: true });
+          if (F3 && n >= 40) { F3.spiral(x, z, color, 1.4, 7, 40, '#ffd23f'); F3.ring(x, 0.5, z, color, 3.5, 44, '#ffffff'); F3.star(x, 2.6, z, '#ffffff', 9, 0.5); ring(x, z, color, 8, 0.6); ring(x, z, '#ffd23f', 5, 0.45); frostRing(x, z, 5, 0.8); screenFlash('rgba(140,255,190,.4)', 0.45); punch = Math.max(punch, 0.5); }
         } else if (kind === 'ignite') {
           flare(x, 1.4, z, '#ff8a1f', 7, 0.35); flare(x, 1.4, z, '#ffe08a', 3.5, 0.18);
           for (let k = 0; k < 34; k++) { const a = Math.random() * Math.PI * 2, v = rnd(2, 7); emit(flamesC, x + Math.sin(a) * 0.3, rnd(0.6, 1.8), z + Math.cos(a) * 0.3, Math.sin(a) * v, rnd(2, 8), Math.cos(a) * v, rnd(0.35, 0.75), k % 3 ? '#ff6a10' : '#ffd23f', -3); }
           for (let k = 0; k < 20; k++) emit(sparks, x, 1.4, z, rnd(-8, 8), rnd(3, 11), rnd(-8, 8), rnd(0.4, 0.9), '#ffd23f', 12);
           for (let k = 0; k < 4; k++) emit(puffs, x + rnd(-0.6, 0.6), 1.6, z + rnd(-0.6, 0.6), rnd(-0.8, 0.8), rnd(1.5, 3), rnd(-0.8, 0.8), 0.9, '#3a2a22');
-          ring(x, z, '#ff7a1a', 4.2, 0.4);
+          ring(x, z, '#ff7a1a', 4.2, 0.4); if (F3) { F3.ring(x, 1, z, '#ff7a1a', 1.8, 20, '#ffd23f'); F3.star(x, 1.5, z, '#ff9a3a', 5, 0.3); F3.crack(x, z, 2.6, 2, 1, 0.6); }
         } else if (kind === 'freeze') {
           flare(x, 1.4, z, '#8fe6ff', 6.5, 0.35); flare(x, 1.4, z, '#ffffff', 3, 0.15);
           shatter(x, z, 9, '#cdf3ff');
           for (let k = 0; k < 30; k++) { const a = k / 30 * Math.PI * 2; emit(sparks, x + Math.sin(a) * 0.4, rnd(0.6, 2.2), z + Math.cos(a) * 0.4, Math.sin(a) * 7, rnd(0, 3), Math.cos(a) * 7, rnd(0.4, 0.8), k % 2 ? '#bff4ff' : '#ffffff', 4); }
-          ring(x, z, '#8fe6ff', 4.4, 0.45);
+          ring(x, z, '#8fe6ff', 4.4, 0.45); frostRing(x, z, 3.2, 1.6);
+          if (F3) { F3.frost(x, 1.4, z, 1.5); F3.ring(x, 0.6, z, '#bff4ff', 2, 26, '#ffffff'); }
         } else if (kind === 'crit') {
           if (F3) { F3.crack(x, z, 3.6, 2.8, 0, 0.9); F3.chips(x, z, 8, rockCol, 1.3); F3.impact(x, 1.5, z, '#ffd23f', 1.5, 0); F3.shake(0.28); }
           flare(x, 1.5, z, '#ffffff', 8, 0.22); flare(x, 1.5, z, '#ffb02a', 11, 0.4);
           for (let k = 0; k < 44; k++) { const a = Math.random() * Math.PI * 2, v = rnd(8, 16); emit(sparks, x, 1.4, z, Math.sin(a) * v, rnd(2, 9), Math.cos(a) * v, rnd(0.25, 0.55), k % 2 ? '#ffd23f' : '#ff5a3a', 10); }
           ring(x, z, '#ffd23f', 5.5, 0.35); ring(x, z, '#ffffff', 3, 0.2);
+          // A crossed slash of light over the target and a ray star: the crit reads at a glance.
+          if (F3) { F3.star(x, 1.8, z, '#ffd23f', 8, 0.32); for (const d of [-1, 1]) for (let k = 0; k < 2; k++) F3.emit(x - d * 1.3, 2.6, z, d * 26, -14, 0, 0.12, 0.7, 0.2, k ? '#ffffff' : '#ffb02a', 1, 0, 0, 0.05, 2); F3.ring(x, 1.2, z, '#ffd23f', 2.4, 26, '#ff5a3a'); }
           punch = Math.max(punch, 1); screenFlash('rgba(255,220,140,.55)', 0.6);
         } else if (kind === 'zapfx') {
           // Chain lightning: violet -> acid green, forking, jumping enemy to enemy (and a strike from above).
@@ -623,12 +746,14 @@
           flare(x, 1.4, z, '#c48bff', 9, 0.35); flare(x, 1.4, z, '#ffffff', 4, 0.15);
           for (let k = 0; k < 60; k++) { const a = k / 60 * Math.PI * 2, v = rnd(12, 18); emit(sparks, x + Math.sin(a), 1.2, z + Math.cos(a), Math.sin(a) * v, rnd(0, 2), Math.cos(a) * v, rnd(0.3, 0.5), k % 3 ? '#b36bff' : '#ffffff'); }
           ring(x, z, '#b36bff', 12, 0.45); ring(x, z, '#ffffff', 7, 0.25); screenFlash('rgba(180,120,255,.4)', 0.4); punch = Math.max(punch, 0.6);
+          if (F3) { F3.ring(x, 0.8, z, '#b36bff', 5.5, 48, '#ffffff'); F3.star(x, 1.6, z, '#d7a8ff', 9, 0.35); }
         } else if (kind === 'meteorhit') {
           if (F3) F3.explosion(x, 1, z, 2.4, { rocks: 12, shake: 0.45, rockCol });
           flare(x, 1.5, z, '#ffffff', 9, 0.2); flare(x, 1.5, z, '#ff6a10', 14, 0.5);
           for (let k = 0; k < 60; k++) { const a = Math.random() * Math.PI * 2, v = rnd(4, 14); emit(flamesC, x, 1, z, Math.sin(a) * v, rnd(3, 12), Math.cos(a) * v, rnd(0.4, 0.9), k % 3 ? '#ff5a10' : '#ffd23f', 8); }
           for (let k = 0; k < 10; k++) emit(puffs, x + rnd(-1.5, 1.5), 1, z + rnd(-1.5, 1.5), rnd(-2, 2), rnd(1, 4), rnd(-2, 2), 1.2, '#2e2018');
           ring(x, z, '#ff7a1a', 8, 0.5); ring(x, z, '#ffd23f', 4.5, 0.3); screenFlash('rgba(255,150,60,.55)', 0.55); punch = Math.max(punch, 1);
+          if (F3) { F3.ring(x, 0.6, z, '#ff7a1a', 4, 40, '#ffd23f'); F3.star(x, 2, z, '#ffb02a', 10, 0.4); }
         } else if (kind === 'rainhit') {
           if (F3) F3.chips(x, z, 4, rockCol, 1);
           flare(x, 1, z, '#fff1a8', 4.5, 0.2);
@@ -636,12 +761,35 @@
           for (let k = 0; k < 6; k++) emit(puffs, x + rnd(-1.5, 1.5), 0.5, z + rnd(-1.5, 1.5), rnd(-1, 1), 1, rnd(-1, 1), 0.6, '#6a5a4a');
           ring(x, z, '#fff1a8', 5, 0.3);
         } else if (kind === 'shieldpop') {
-          flare(x, 1.5, z, '#8fd8ff', 7, 0.3); ring(x, z, '#8fd8ff', 5, 0.35);
+          flare(x, 1.5, z, '#8fd8ff', 7, 0.3); ring(x, z, '#8fd8ff', 5, 0.35); if (F3) { F3.star(x, 1.6, z, '#bfeaff', 7, 0.3); F3.ring(x, 1.4, z, '#8fd8ff', 2.4, 24, '#ffffff'); }
           for (let k = 0; k < 30; k++) { const a = Math.random() * Math.PI * 2; emit(sparks, x, rnd(0.5, 2.5), z, Math.sin(a) * 8, rnd(-1, 4), Math.cos(a) * 8, 0.4, '#bfeaff'); }
         } else if (kind === 'heal') {
-          flare(x, 1.5, z, '#7dffae', 5, 0.4);
+          flare(x, 1.5, z, color, 5, 0.4); if (F3) F3.heal(x, z, color, 1, '#ffffff'); ring(x, z, color, 3.2, 0.4);
           for (let k = 0; k < 14; k++) { const a = Math.random() * Math.PI * 2, r = rnd(0.4, 1.2); emit(sparks, x + Math.sin(a) * r, rnd(0.2, 1.2), z + Math.cos(a) * r, 0, rnd(2.5, 5), 0, rnd(0.6, 1), k % 2 ? '#7dffae' : '#d8ffe6'); }
-        } else if (kind === 'angel') emit(sparks, x + rnd(-1.5, 1.5), rnd(0.5, 4), z + rnd(-1.5, 1.5), 0, rnd(0.5, 1.5), 0, rnd(0.8, 1.5), '#fff2b0');
+        } else if (kind === 'skill') skillFx(color, x, z);
+        // A player shot landed: the element / class flavour on top of the plain hit.
+        else if (kind === 'shothit') {
+          const sk = (level && level.skills) || {}, orb = level && level.shotKind === 'orb';
+          if (F3 && orb) { F3.star(x, 1.4, z, sk.fire ? '#ff9a3a' : sk.ice ? '#bff4ff' : '#c48bff', 3.4, 0.22); F3.ring(x, 1.2, z, sk.ice ? '#8fe6ff' : '#b36bff', 1.1, 12, '#5fe0ff'); }
+          if (F3 && sk.ice) { if (Math.random() < 0.6) F3.frost(x, 1.3, z, 0.45); else F3.star(x, 1.3, z, '#bff4ff', 2.6, 0.18); if (Math.random() < 0.3) frostRing(x, z, 1.8, 0.7); }
+          if (F3 && sk.fire) { for (let k = 0; k < 10; k++) { const a = Math.random() * Math.PI * 2, v = rnd(2, 5); emit(flamesC, x, 1.2, z, Math.sin(a) * v, rnd(2, 5), Math.cos(a) * v, rnd(0.25, 0.45), k % 2 ? '#ff6a10' : '#ffd23f', -2); } }
+          if (F3 && sk.bolt) F3.bolt(x + rnd(-0.6, 0.6), 2.6, z + rnd(-0.6, 0.6), x, 0.6, z, { w: 0.3, colA: '#c77dff', colB: '#e8ffd0', branches: 0, life: 0.12, sparks: 3, flare: false });
+          if (sk.poison) for (let k = 0; k < 8; k++) emit(sparks, x + rnd(-0.4, 0.4), 1.2, z + rnd(-0.4, 0.4), rnd(-3, 3), rnd(1, 4), rnd(-3, 3), rnd(0.3, 0.6), k % 2 ? '#7dff4a' : '#d8ff9a', 10);
+          if (n > 1 && F3) F3.star(x, 1.6, z, '#ffd23f', 3, 0.15); // crit glint (the big crit burst comes from 'crit')
+        }
+        // A frozen foe dies: it bursts into ice.
+        else if (kind === 'shatter') { if (F3) { F3.frost(x, 1.4, z, 2.4); F3.ring(x, 0.6, z, '#bff4ff', 3, 36, '#ffffff'); } shatter(x, z, 16, '#dff6ff'); frostRing(x, z, 4, 1.2); flare(x, 1.4, z, '#bff4ff', 8, 0.3); }
+        else if (kind === 'ricochet') { flare(x, 1.3, z, '#5fe0ff', 3.4, 0.2); if (F3) { F3.ring(x, 1.3, z, '#5fe0ff', 0.9, 10, '#ffffff'); F3.star(x, 1.3, z, '#9ff0ff', 2.2, 0.15); } }
+        else if (kind === 'pierce') { const pa = typeof color === 'number' ? color : 0; if (F3) for (let k = 0; k < 6; k++) F3.emit(x, 1.3, z, Math.sin(pa) * rnd(14, 24) + rnd(-2, 2), rnd(0, 1), Math.cos(pa) * rnd(14, 24) + rnd(-2, 2), 0.2, 0.5, 0.1, k % 2 ? '#ffffff' : '#9ff0ff', 1, 0, 2, 0.04, 2); flare(x, 1.3, z, '#ffffff', 2.6, 0.12); }
+        else if (kind === 'wallbounce') { if (F3) { F3.impact(x, 1.3, z, '#ffb347', 0.7, 2, rockCol); F3.star(x, 1.3, z, '#ffd27a', 2.4, 0.15); } }
+        else if (kind === 'split') { if (F3) { F3.star(x, 1.3, z, '#d7a8ff', 3, 0.18); F3.ring(x, 1.3, z, '#d7a8ff', 0.8, 10, '#5fe0ff'); } }
+        // Bloodthirst: a red stream from the fallen foe into the hero.
+        else if (kind === 'drain') { const p = color; if (F3) for (let k = 0; k < 14; k++) { const t = rnd(0.35, 0.6), ox = rnd(-0.5, 0.5), oz = rnd(-0.5, 0.5); F3.emit(x + ox, 1.4, z + oz, (p.x - x - ox) / t, rnd(0.5, 2), (p.z - z - oz) / t, t, 0.4, 0.15, k % 2 ? '#ff2a4a' : '#ff8a95', 1, 0, 0, 0.02, 0); } }
+        else if (kind === 'dodge') { if (F3) { F3.star(x, 1.4, z, '#e2f4ff', 4, 0.25); F3.ring(x, 0.5, z, '#bff0ff', 1.4, 16); } for (let k = 0; k < 10; k++) { const a = k / 10 * Math.PI * 2; emit(puffs, x + Math.sin(a) * 0.6, 0.8, z + Math.cos(a) * 0.6, Math.sin(a) * 3, 0.4, Math.cos(a) * 3, 0.4, '#e2f4ff'); } }
+        else if (kind === 'headshot') { ring(x, z, '#ff3a3a', 2.6, 0.35); if (F3) { F3.charge(x, 1.6, z, '#ff3a3a', 2.4, 16, 0.18, '#ffd23f'); F3.star(x, 2, z, '#ff5a3a', 6, 0.3); } }
+        // A caster lets its spell go (enemy wizards, bosses): a burst at its hands.
+        else if (kind === 'cast') { if (F3) { F3.star(x, 1.8, z, color, 4.5, 0.25); F3.ring(x, 1.4, z, color, 1.4, 18, '#ffffff'); } flare(x, 1.6, z, color, 4, 0.2); }
+        else if (kind === 'angel') emit(sparks, x + rnd(-1.5, 1.5), rnd(0.5, 4), z + rnd(-1.5, 1.5), 0, rnd(0.5, 1.5), 0, rnd(0.8, 1.5), '#fff2b0');
       }
 
       // ---------- Room ----------
@@ -981,7 +1129,7 @@
         is3D: true,
         fit() { const W = canvas.clientWidth || innerWidth, H = canvas.clientHeight || innerHeight; renderer.setSize(W, H, false); camera.aspect = W / H; camera.updateProjectionMatrix(); camKey = ''; },
         project(x, z, h) { v3.set(x, h || 0, z).project(camera); const W = canvas.clientWidth || innerWidth, H = canvas.clientHeight || innerHeight; return { x: (v3.x + 1) / 2 * W, y: (1 - v3.y) / 2 * H }; },
-        setRoom(S, ch) { level = S; menuKey = ''; buildRoom(S, ch); if (F3 && !F3.warmed) { F3.warmed = true; F3.warm(S.p.x, 1.3, S.p.z); } },
+        setRoom(S, ch) { level = S; menuKey = ''; buildRoom(S, ch); if (F3 && !F3.warmed) { F3.warmed = true; F3.warm(S.p.x, 1.3, S.p.z); warmV2(S); } },
         setMenu(hero, ch, tint, dim, skin) { const k = hero + (tint || '') + (dim ? 'd' : '') + (skin ? skin.id : '') + ch.fog + (ch.th ? ch.th.wall + ch.th.fx : ''); if (k === menuKey) return; menuKey = k; level = null; buildMenu(hero, ch, tint, dim, skin); },
         // Outfit put on: the menu hero hops and spins in a burst of the outfit's colours.
         celebrate() {
@@ -1046,6 +1194,11 @@
           for (let i = boltsL.length - 1; i >= 0; i--) { const b = boltsL[i]; b.life -= dt; b.g.visible = Math.random() < 0.85; if (b.life <= 0) { scene.remove(b.g); boltsL.splice(i, 1); } }
           punch = Math.max(0, punch - dt * 5);
           if (Math.abs(camera.fov - (BASE_FOV - punch * 5)) > 0.01) { camera.fov = BASE_FOV - punch * 5; camera.updateProjectionMatrix(); }
+          for (let i = frostRings.length - 1; i >= 0; i--) {
+            const k = frostRings[i]; k.life -= dt; const t = 1 - Math.max(0, k.life / k.max), e = 1 - Math.pow(1 - Math.min(1, t * 3), 3);
+            k.m.scale.setScalar(k.size * (0.35 + 0.65 * e)); k.m.material.opacity = Math.max(0, 1 - t * t) * 0.9; k.m.rotation.y += dt * 0.4;
+            if (k.life <= 0) { k.m.visible = false; frostPool.push(k.m); frostRings.splice(i, 1); }
+          }
           for (let i = shocks.length - 1; i >= 0; i--) {
             const k = shocks[i]; k.life -= dt; const t = 1 - Math.max(0, k.life / k.max);
             k.m.scale.setScalar(0.3 + k.size * t); k.m.material.opacity = Math.max(0, 1 - t);
@@ -1053,8 +1206,8 @@
           }
           if (!S || mode === 'menu') {
             // In-run skill effects live on the scene, not the room: never let one from the last run linger on the menu hero.
-            for (const o of [bubble, iceG, auraM, auraF, rageG, haloS, giantS, meteorS, bossPool, bossBeam, ...wisdomS]) o.visible = false;
-            if (heroAura) heroAura.visible = false;
+            for (const o of [bubble, iceG, auraM, auraF, rageG, haloS, giantS, meteorS, bossPool, bossBeam, chargeS, powerS, ...wisdomS, ...speedS]) o.visible = false;
+            if (heroAura) heroAura.visible = false; if (bossAura) bossAura.visible = false; castRunes.hide(0);
             // Legendary / mythic gear shows on the menu hero too: aura rings, a light pillar and sparkles.
             const mg = R.menuGear || {};
             auraG.visible = !!mg.aura; aura2.visible = pillar.visible = !!mg.mythic; handG.visible = false;
@@ -1084,7 +1237,7 @@
           const seen = new Set();
           const sync = (key, e, name, scale, isHero) => {
             let g = ents.get(key);
-            if (!g) { g = charMesh(name, VS(scale)); if (isHero && S.skin) dress(g, name, S.skin); if (!isHero && e.boss) dress(g, name, bossLook(e)); if (isHero && S.heroTint) { g.userData.m.material.color.set(S.heroTint); g.userData.m.material.emissive && g.userData.m.material.emissive.set(S.heroTint).multiplyScalar(0.38); } dyn.add(g); ents.set(key, g); }
+            if (!g) { g = charMesh(name, VS(scale) * (isHero || (e && e.boss) ? 1 : 1.12)); /* foes a little bigger: bolder silhouettes (art target) */ if (isHero && S.skin) dress(g, name, S.skin); if (!isHero && e.boss) { dress(g, name, bossLook(e)); bossRig(g, e); } if (isHero && S.heroTint) { g.userData.m.material.color.set(S.heroTint); g.userData.m.material.emissive && g.userData.m.material.emissive.set(S.heroTint).multiplyScalar(0.38); } dyn.add(g); ents.set(key, g); }
             seen.add(key);
             const m = g.userData.m;
             if (isHero) heroPose(m, e); else foePose(m, e);
@@ -1092,10 +1245,26 @@
             if (!isHero && e.state === 'rise') y = -2.6 * Math.max(0, e.st / 0.8);
             if (!isHero && e.state === 'dead') y = -Math.max(0, 0.45 - e.st) * 2;
             g.position.set(e.x, y, e.z); g.rotation.y = e.face;
+            // Creatures feel alive: a soft breathing squash, a springy pop when they rise, a squash when hit.
+            if (!isHero) {
+              let sy = 1 + 0.035 * Math.sin(e.anim * 0.9 + e.x * 3), sxz = 1 / Math.sqrt(sy);
+              if (e.state === 'rise') { const u = 1 - Math.max(0, e.st / 0.8); sy *= 0.6 + 0.4 * u + 0.15 * Math.sin(u * Math.PI); sxz *= 0.8 + 0.2 * u; }
+              if (e.flash > 0) { const k = e.flash / 0.12; sy *= 1 - 0.14 * k; sxz *= 1 + 0.1 * k; }
+              g.scale.set(sxz, sy, sxz);
+            }
             const mat = m.material, wind = !isHero && (e.state === 'wind' || e.state === 'aim');
             if (mat.emissive) mat.emissive.setRGB(e.flash > 0 ? 0.9 : e.burn > 0 ? 0.35 : wind ? 0.45 + 0.25 * Math.sin(time * 30) : 0, e.flash > 0 ? 0.9 : e.slow > 0 ? 0.25 : wind ? 0.05 : 0, e.flash > 0 ? 0.9 : e.slow > 0 ? 0.5 : 0);
             // Boss look: glow pulse, headpiece and particles (a hit flash or a wind-up glow wins over the glow).
             if (!isHero && e.boss && e.hp > 0 && g.userData.skin && !(e.flash > 0) && !wind) skinFx(g, e.x, e.z, e.moving, dt, time);
+            if (!isHero && e.boss) tickRig(g, e, time, dt);
+            // Boss death: one huge burst, then explosions popping over the body while it glows white and sinks.
+            if (!isHero && e.boss && e.state === 'dead') {
+              if (!g.userData.dying) { g.userData.dying = true; const big = !e.mid;
+                if (F3) { F3.explosion(e.x, 2, e.z, big ? 3.2 : 2, { rocks: 16, shake: big ? 0.9 : 0.5, rockCol }); F3.star(e.x, 2.5, e.z, '#ffffff', big ? 16 : 10, 0.6); F3.ring(e.x, 0.6, e.z, '#ffd23f', big ? 6 : 4, 60, '#ffffff'); F3.spiral(e.x, e.z, '#ffd23f', 2, 9, 40, '#ffffff'); }
+                ring(e.x, e.z, '#ffd23f', 14, 0.9); ring(e.x, e.z, '#ffffff', 9, 0.6); screenFlash('rgba(255,240,200,.75)', 0.8); }
+              if (F3 && e.st > 0.25 && Math.random() < dt * 14) F3.explosion(e.x + rnd(-0.6, 0.6) * e.scale, rnd(1, 3) * e.scale * 0.6, e.z + rnd(-0.5, 0.5) * e.scale, rnd(0.6, 1.1), { n: 6, rocks: 2, scorch: false, shake: 0.12, rockCol });
+              if (mat.emissive) { const k = Math.min(1, (0.9 - e.st) * 1.5); mat.emissive.setRGB(k, k * 0.85, k * 0.6); }
+            }
             if (isHero) g.visible = !(e.inv > 0 && Math.floor(e.inv * 16) % 2);
             // Status effects you can see: burning foes flicker and shed flames and smoke, frozen ones turn blue and drip frost.
             if (!isHero && e.hp > 0) {
@@ -1107,12 +1276,27 @@
                 if (Math.random() < dt * 4) emit(puffs, e.x, 2 * hs, e.z, rnd(-0.3, 0.3), 1.6, rnd(-0.3, 0.3), 0.7, '#3a2a22');
               }
               let crust = g.userData.crust;
-              if (e.slow > 0 && !crust) { crust = g.userData.crust = new T.Mesh(new T.IcosahedronGeometry(0.75, 0), new T.MeshLambertMaterial({ color: '#cdf3ff', emissive: '#3a9ad0', transparent: true, opacity: 0.45, flatShading: true, depthWrite: false })); crust.position.y = 1.0; g.add(crust); }
-              if (crust) { crust.visible = e.slow > 0; if (crust.visible) { crust.scale.set(hs * 0.9, hs * 1.25, hs * 0.9); crust.rotation.y += dt * 0.5; } }
+              // Frozen: an ice shell, a ring of ice crystals at the feet and frost on the floor (shared geometry/materials).
+              if (e.slow > 0 && !crust) { crust = g.userData.crust = new T.Group(); const sh = new T.Mesh(ICE.shell, ICE.shellM); sh.position.y = 1.0; crust.add(sh); crust.userData.sh = sh;
+                for (let k = 0; k < 6; k++) { const c = new T.Mesh(ICE.cry, ICE.cryM), a = k / 6 * Math.PI * 2; c.position.set(Math.sin(a) * 0.62, 0.28, Math.cos(a) * 0.62); c.rotation.set(Math.cos(a) * 0.55, 0, -Math.sin(a) * 0.55); c.scale.setScalar(0.7 + (k % 3) * 0.25); crust.add(c); }
+                const fr = new T.Mesh(ICE.disc, ICE.discM); fr.position.y = 0.1; crust.add(fr); g.add(crust); }
+              if (crust) { crust.visible = e.slow > 0; if (crust.visible) { crust.scale.set(hs * 0.9 / g.scale.x, hs / g.scale.y, hs * 0.9 / g.scale.z); crust.userData.sh.scale.set(1, 1.25, 1); crust.userData.sh.rotation.y += dt * 0.5; } }
               if (e.slow > 0) {
                 if (mat.emissive && !(e.flash > 0)) mat.emissive.setRGB(0.12, 0.42, 0.75);
                 if (Math.random() < dt * 14) emit(sparks, e.x + rnd(-0.6, 0.6) * hs, rnd(1, 2.2) * hs, e.z + rnd(-0.6, 0.6) * hs, 0, rnd(-0.5, 0.3), 0, rnd(0.4, 0.8), Math.random() < 0.5 ? '#bff4ff' : '#ffffff', 3);
+                if (F3 && Math.random() < dt * 6) F3.flake(e.x + rnd(-0.7, 0.7) * hs, rnd(1.2, 2.2) * hs, e.z + rnd(-0.7, 0.7) * hs, '#e8fbff', 0.3, 0.9);
               }
+              // Shocked (chain lightning): small arcs crackle over the body. Poisoned: green tint and bubbles.
+              if (e.shock > 0 && F3 && Math.random() < dt * 9) { const a = Math.random() * 6.28, r = 0.6 * hs; F3.bolt(e.x + Math.sin(a) * r, rnd(0.6, 1.6) * hs, e.z + Math.cos(a) * r, e.x - Math.sin(a) * r, rnd(0.6, 1.6) * hs, e.z - Math.cos(a) * r, { w: 0.18, colA: '#c77dff', colB: '#e8ffd0', branches: 0, life: 0.1, sparks: 2, flare: false }); }
+              if (e.psn > 0) { if (mat.emissive && !(e.flash > 0)) mat.emissive.setRGB(0.12, 0.42 + 0.1 * Math.sin(time * 9), 0.05); if (Math.random() < dt * 10) emit(sparks, e.x + rnd(-0.5, 0.5) * hs, rnd(0.6, 1.8) * hs, e.z + rnd(-0.5, 0.5) * hs, 0, rnd(0.6, 1.4), 0, 0.5, Math.random() < 0.5 ? '#7dff4a' : '#d8ff9a', -0.5); }
+              // Executioner: foes it can finish off are marked with a violet wisp.
+              if (S.skills && S.skills.execute && !e.boss && e.hp < e.max * 0.15 && F3 && Math.random() < dt * 8) F3.mote(e.x + rnd(-0.3, 0.3), 2.6 * hs, e.z + rnd(-0.3, 0.3), '#c08cff', 0.35, 0.5, 0.8);
+              // Casters (enemy wizards, bosses) wind up on a rune circle with motes rushing into their hands, then let go.
+              const casting = e.state === 'cast' || e.state === 'cast2' || (e.boss && e.state === 'summon');
+              if (casting) { const cc = e.boss ? CREW_C[(e.crew || 0) % 6] : '#c77dff', m2 = castRunes.get(nRune++), hx = e.x + Math.sin(e.face) * 0.7 * hs, hz = e.z + Math.cos(e.face) * 0.7 * hs;
+                m2.material.color.set(cc); m2.position.set(e.x, 0.09, e.z); m2.rotation.y = time * 2.2; m2.scale.setScalar(e.r * 3.4 * (0.85 + 0.15 * Math.sin(time * 12)));
+                if (F3 && dt > 0) F3.charge(hx, 1.5 * hs, hz, cc, 1.1 * hs, 2, 0.3, '#ffffff'); g.userData.cast = cc; }
+              else if (g.userData.cast) { fx('cast', e.x + Math.sin(e.face) * 0.8 * hs, e.z + Math.cos(e.face) * 0.8 * hs, g.userData.cast); g.userData.cast = null; }
             }
             return g;
           };
@@ -1121,9 +1305,17 @@
           if (heroAura) { heroAura.visible = !S.p.dead; heroAura.position.set(S.p.x, 0.08, S.p.z); heroAura.tick(time); }
           // Boss spotlight follows the living boss.
           { const b = S.enemies.find(e => e.boss && e.hp > 0 && e.state !== 'rise'); bossPool.visible = bossBeam.visible = !!b;
+            if (bossAura) { bossAura.visible = !!b; if (b) { const c = b.rage ? '#ff2a2a' : CREW_C[(b.crew || 0) % 6]; if (bossAura.userData.cur !== c) { bossAura.userData.cur = c; bossAura.userData.setColor(c); } bossAura.position.set(b.x, 0.11, b.z); bossAura.scale.setScalar((b.r || 2) * 0.95); bossAura.tick(time * (b.rage ? 2 : 1)); } }
             if (b) { const r = (b.r || 2) * 2.6; bossPool.position.set(b.x, 0.1, b.z); bossPool.scale.set(r * 2.4, 1, r * 2.4); bossPool.material.opacity = 0.38 + 0.12 * Math.sin(time * 3);
               bossBeam.position.set(b.x, 0, b.z); bossBeam.scale.set(r * 0.42, 1, r * 0.42); bossBeam.material.opacity = 0.22 + 0.06 * Math.sin(time * 2.1);
               if (F3 && Math.random() < dt * 10) { const a = Math.random() * 6.28; F3.mote(b.x + Math.sin(a) * r * 0.8, 0.3, b.z + Math.cos(a) * r * 0.8, Math.random() < 0.5 ? '#c77dff' : '#ff4a7a', 0.22, rnd(1, 1.6), rnd(1.5, 3)); } } }
+          // Boss entrance: motes stream into the boss as it rises, a pillar of its colour, then a shockwave on the roar.
+          if (S.intro && F3 && dt > 0) {
+            const I = S.intro, b = S.enemies.find(e => e.boss), c = b ? CREW_C[(b.crew || 0) % 6] : '#ff3a5a';
+            if (I.t < 1.05) { F3.charge(I.x, 2, I.z, c, 7, 3, 0.5, '#ffffff'); if (Math.random() < dt * 20) emit(puffs, I.x + rnd(-3, 3), 0.4, I.z + rnd(-3, 3), 0, rnd(0.5, 1.5), 0, 0.8, '#5a4a3a'); }
+            if (I.t > 0.12 && !I.v2a) { I.v2a = true; F3.crack(I.x, I.z, 8, 3, 0, 0.9); F3.spiral(I.x, I.z, c, 2.4, 12, 50, '#ffffff'); ring(I.x, I.z, c, 10, 0.8); }
+            if (I.t > 1.05 && !I.v2b) { I.v2b = true; F3.ring(I.x, 0.6, I.z, c, 7, 64, '#ffffff'); F3.star(I.x, 3, I.z, c, 18, 0.6); ring(I.x, I.z, '#ffffff', 16, 0.7); ring(I.x, I.z, c, 22, 1); screenFlash(c, 0.5); }
+          }
           // Gear on the hero: a coloured aura ring for good armour/jewels, a glow at the weapon hand, sparkles for legendaries.
           const gl = S.gearLook || {};
           auraG.visible = !!gl.aura; if (gl.aura) { auraG.material.color.set(gl.aura); auraG.position.set(S.p.x, 0.12, S.p.z); auraG.rotation.y = -time * 0.8; auraG.material.opacity = 0.55 + 0.15 * Math.sin(time * 3); }
@@ -1137,6 +1329,19 @@
             const hm = ents.get('hero'); if (hm && hm.userData.m.material.emissive && !(S.p.inv > 0)) { const k = 0.12 * Math.sin(time * 5); if (gl.celestial) hm.userData.m.material.emissive.setRGB(0.02, 0.1 + k * 0.6, 0.17 + k); else hm.userData.m.material.emissive.setRGB(0.18 + k, 0.03, 0.02); }
           }
           { const hm = ents.get('hero'); if (hm && !(S.p.inv > 0)) skinFx(hm, S.p.x, S.p.z, S.p.moving, dt, time); }
+          // Skill marks at the hands: the mage's spell charging before every cast, attack-speed motes circling the hand,
+          // an ember glow for attack boosts, wind at the feet for dodge, gold glints for crits.
+          { const ps = S.skills || {}, f = S.p.face, hx = S.p.x + Math.sin(f + 0.5) * 0.95, hz = S.p.z + Math.cos(f + 0.5) * 0.95, live = !S.p.dead && mode === 'play';
+            const charging = live && S.shotKind === 'orb' && S.p.cd > 0 && S.p.cd < 0.32 && S.enemies.some(e => e.hp > 0 && e.state !== 'rise');
+            chargeS.visible = charging;
+            if (charging) { const u = 1 - S.p.cd / 0.32; chargeS.position.set(hx, 1.7, hz); chargeS.scale.setScalar(0.6 + 1.6 * u + 0.15 * Math.sin(time * 30)); chargeS.material.color.set(ps.fire ? '#ff8a2a' : ps.ice ? '#9fe8ff' : ps.poison ? '#7dff4a' : '#c48bff'); if (F3 && dt > 0) F3.charge(hx, 1.7, hz, chargeS.material.color, 1.3, 2, 0.28, '#ffffff'); }
+            const spd = (ps.spd || 0) + (ps.spdS || 0);
+            speedS.forEach((o, k) => { o.visible = spd > 0 && live; if (o.visible) { const a = time * (6 + spd) + k * Math.PI; o.position.set(hx + Math.sin(a) * 0.45, 1.6 + Math.cos(a) * 0.3, hz + Math.cos(a) * 0.45); o.scale.setScalar(0.5 + 0.05 * spd); if (F3 && Math.random() < dt * (8 + 3 * spd)) F3.trail(o.position.x, o.position.y, o.position.z, '#ffe27a', 0.35, 0.2); } });
+            const pw = (ps.atk || 0) + (ps.atkS || 0) * 0.5;
+            powerS.visible = pw > 0 && live;
+            if (powerS.visible) { powerS.position.set(hx, 1.5, hz); powerS.scale.setScalar(0.9 + 0.12 * pw + 0.15 * Math.sin(time * 12)); powerS.material.color.set(ps.atk ? '#ff5a2a' : '#cfe8ff'); if (Math.random() < dt * (4 + 2 * pw)) emit(flamesC, hx, 1.5, hz, rnd(-0.3, 0.3), rnd(1, 2), rnd(-0.3, 0.3), 0.35, ps.atk ? '#ff5a2a' : '#eaf6ff', -2); }
+            if (ps.dodge && live && Math.random() < dt * 3 * ps.dodge) emit(puffs, S.p.x + rnd(-0.6, 0.6), 0.3, S.p.z + rnd(-0.6, 0.6), rnd(-0.6, 0.6), 0.3, rnd(-0.6, 0.6), 0.5, '#e2f4ff');
+            if (ps.crit && live && F3 && Math.random() < dt * 2 * ps.crit) F3.star(hx, 1.7, hz, '#ffd23f', 1.4, 0.2); }
           bubble.visible = !!S.shieldOn; if (bubble.visible) { bubble.position.set(S.p.x, 1.5, S.p.z); bubble.scale.setScalar(2.3 + 0.08 * Math.sin(time * 5)); bubbleMat.uniforms.t.value = time; bubble.rotation.y = time * 0.3;
             if (Math.random() < dt * 6) { const a = Math.random() * 6.28, b = Math.random() * 3.14; emit(sparks, S.p.x + Math.sin(a) * Math.sin(b) * 2.3, 1.5 + Math.cos(b) * 2.3, S.p.z + Math.cos(a) * Math.sin(b) * 2.3, 0, 0.3, 0, 0.4, '#bfeaff'); } }
           // Passive skills show on the hero, in the same sparkle language as the gear glow.
@@ -1151,14 +1356,18 @@
             const bossOn = !!ps.giant && S.enemies.some(e => e.boss && e.hp > 0);
             giantS.visible = bossOn; if (bossOn) { giantS.position.set(hx + Math.sin(S.p.face - 0.6) * 0.9, 1.6, hz + Math.cos(S.p.face - 0.6) * 0.9); giantS.scale.setScalar(1.5 + 0.3 * Math.sin(time * 12)); if (Math.random() < dt * 14) emit(flamesC, giantS.position.x, 1.6, giantS.position.z, 0, rnd(1, 2), 0, 0.3, '#ff5a2a', -2); }
           }
+          nRune = 0;
           S.enemies.forEach(e => { if (!e.key) e.key = 'e' + (++uid); sync(e.key, e, e.kind, e.scale, false); });
+          castRunes.hide(nRune);
           ents.forEach((g, k) => { if (!seen.has(k)) { dyn.remove(g); ents.delete(k); } });
           // Projectiles with light trails.
-          const kind = S.shotKind || 'bolt';
+          const kind = S.shotKind || 'bolt'; frameN++;
           if (kind !== shotKind) { shotKind = kind; shots.list.forEach(m => { m.geometry = SHOT_GEO[kind]; m.material = shotMat[kind]; }); }
           // Elemental arrows: the trail and the sparks it sheds follow the element the hero has picked.
-          const skl = S.skills || {}, elemCol = skl.fire ? '#ff7a1a' : skl.ice ? '#8fe6ff' : skl.bolt ? '#c77dff' : null;
-          const elemCol2 = skl.fire ? '#ffd23f' : skl.ice ? '#ffffff' : '#f2d4ff', elemUp = skl.ice && !skl.fire ? -0.5 : 1.5;
+          const skl = S.skills || {}, elemCol = skl.fire ? '#ff7a1a' : skl.ice ? '#8fe6ff' : skl.bolt ? '#c77dff' : skl.poison ? '#7dff4a' : null;
+          const elemCol2 = skl.fire ? '#ffd23f' : skl.ice ? '#ffffff' : skl.poison ? '#d8ff9a' : '#f2d4ff', elemUp = skl.ice && !skl.fire ? -0.5 : 1.5;
+          // The arrow/orb itself takes the element's tint (ice arrows look like ice).
+          if (kind === 'bolt' || kind === 'orb') shotMat[kind].color.set(skl.ice ? '#e4faff' : skl.fire ? '#ffd8a0' : skl.poison ? '#dcffb8' : skl.bolt ? '#f0dcff' : SHOT_COL[kind]);
           S.shots.forEach((s, i) => {
             const m = shots.get(i); m.geometry = SHOT_GEO[kind]; m.material = shotMat[kind]; m.position.set(s.x, 1.3, s.z); m.rotation.set(0, s.a + (kind === 'axe' || kind === 'blade' ? time * 14 : 0), 0);
             const t = trails.get(i); t.position.set(s.x, 1.3, s.z); t.rotation.set(0, s.a, 0); t.material.color.set(elemCol || (kind === 'bolt' ? '#9ff0ff' : SHOT_COL[kind])); t.scale.set(elemCol ? 1.8 : 1, 1, elemCol ? 1.7 : 1);
@@ -1169,10 +1378,21 @@
             if (F3 && dt > 0) F3.trail(s.x - Math.sin(s.a) * 0.5, 1.3, s.z - Math.cos(s.a) * 0.5, elemCol || (i % 3 === 1 ? '#ff7ad8' : '#5fe0ff'), elemCol ? 0.75 : 0.6, 0.16);
             if (!s._seen) { s._seen = 1; flare(s.x, 1.3, s.z, elemCol || '#fff1a8', (elemCol ? 3.4 : 2) * pw, 0.12);
               // Bow release: one bright burst with a fan of sparks per volley (several arrows can leave on one frame).
-              if (F3 && !s.child && muzzleT <= 0) { muzzleT = 0.06; const fa = S.p.face; F3.muzzle(S.p.x + Math.sin(fa) * 1.1, 1.45, S.p.z + Math.cos(fa) * 1.1, Math.sin(fa), Math.cos(fa), elemCol || '#ffc46a', 1.15); }
+              if (F3 && !s.child && muzzleT <= 0) { muzzleT = 0.06; const fa = S.p.face, mx = S.p.x + Math.sin(fa) * 1.1, mz = S.p.z + Math.cos(fa) * 1.1; F3.muzzle(mx, 1.45, mz, Math.sin(fa), Math.cos(fa), elemCol || '#ffc46a', 1.15);
+                if (kind === 'orb') { F3.ring(mx, 1.45, mz, elemCol || '#c48bff', 0.7, 12, '#ffffff'); F3.star(mx, 1.45, mz, elemCol || '#d7a8ff', 3, 0.16); }
+                if (skl.spd || skl.spdS) F3.ring(mx, 1.45, mz, '#ffe27a', 0.45, 8);
+                if (skl.ice) F3.frost(mx, 1.45, mz, 0.35); }
               if (skl.spdS || skl.spd) for (let k = 0; k < 3; k++) emit(sparks, s.x, 1.3, s.z, rnd(-2, 2), rnd(0.5, 2), rnd(-2, 2), 0.2, '#ffe27a'); }
             if (skl.atkS && Math.random() < dt * 30) emit(sparks, s.x, 1.3, s.z, 0, 0.2, 0, 0.22, '#eaf6ff');
             if (skl.fire && Math.random() < dt * 60) emit(flamesC, s.x + rnd(-0.2, 0.2), 1.3, s.z + rnd(-0.2, 0.2), rnd(-0.5, 0.5), rnd(0.5, 1.5), rnd(-0.5, 0.5), rnd(0.15, 0.3), Math.random() < 0.5 ? '#ff6a10' : '#ffc23a', -2);
+            if (F3 && dt > 0) {
+              // Ice arrows shed snowflakes and frost; poison drips spores; lightning crackles along the shaft; orbs spiral.
+              if (skl.ice && Math.random() < dt * 30) F3.flake(s.x + rnd(-0.25, 0.25), 1.3 + rnd(-0.2, 0.2), s.z + rnd(-0.25, 0.25), Math.random() < 0.5 ? '#e8fbff' : '#9fe8ff', 0.4, 0.8);
+              if (skl.ice && (i + frameN) % 2) F3.trail(s.x - Math.sin(s.a) * 0.9, 1.3, s.z - Math.cos(s.a) * 0.9, '#6fd4ff', 0.5, 0.34);
+              if (skl.poison && Math.random() < dt * 25) F3.flake(s.x, 1.3, s.z, '#9dff5a', 0.3, 0.6);
+              if (skl.bolt && Math.random() < dt * 4) F3.bolt(s.x, 1.3, s.z, s.x - Math.sin(s.a) * 1.6 + rnd(-0.4, 0.4), 1.3 + rnd(-0.3, 0.3), s.z - Math.cos(s.a) * 1.6 + rnd(-0.4, 0.4), { w: 0.14, colA: '#c77dff', colB: '#e8ffd0', branches: 0, life: 0.08, sparks: 0, flare: false });
+              if (kind === 'orb') for (let k = 0; k < 2; k++) { const a = time * 22 + k * Math.PI + i; F3.trail(s.x + Math.cos(s.a) * Math.sin(a) * 0.45, 1.3 + Math.cos(a) * 0.45, s.z - Math.sin(s.a) * Math.sin(a) * 0.45, k ? elemCol2 : (elemCol || '#c48bff'), 0.42, 0.24); }
+            }
             if (elemCol && Math.random() < dt * 40) emit(sparks, s.x + rnd(-0.15, 0.15), 1.3 + rnd(-0.15, 0.15), s.z + rnd(-0.15, 0.15), rnd(-0.6, 0.6), elemUp, rnd(-0.6, 0.6), rnd(0.2, 0.4), Math.random() < 0.5 ? elemCol : elemCol2, elemUp < 0 ? 3 : -2);
           });
           shots.hide(S.shots.length); trails.hide(S.shots.length); shotGlows.hide(S.shots.length); muzzleT -= dt;
@@ -1180,7 +1400,8 @@
             const ax = s.kind === 'axe', m = foes.get(i);
             m.geometry = ax ? foeAxe : s.kind === 'bolt' ? foeBolt : foeOrb; m.material = ax ? bmat('#ffffff', { vertexColors: true }) : bmat(s.kind === 'bolt' ? '#ff5050' : '#e07bff');
             m.position.set(s.x, 1.2, s.z); m.rotation.y = s.a + (ax ? time * 12 : 0);
-            const gl = glows.get(i); gl.position.set(s.x, 1.2, s.z); gl.material.color.set(ax ? '#ff7a30' : s.kind === 'bolt' ? '#ff3030' : '#c040ff'); gl.scale.setScalar(ax ? 1.4 : s.kind === 'bolt' ? 1.6 : 2.4);
+            const gl = glows.get(i); gl.position.set(s.x, 1.2, s.z); gl.material.color.set(ax ? '#ff7a30' : s.kind === 'bolt' ? '#ff3030' : '#c040ff'); gl.scale.setScalar((ax ? 1.4 : s.kind === 'bolt' ? 1.6 : 2.4) * (0.9 + 0.15 * Math.sin(time * 30 + i)));
+            if (F3 && dt > 0) F3.trail(s.x, 1.2, s.z, ax ? '#ff7a30' : s.kind === 'bolt' ? '#ff3030' : '#c040ff', s.kind === 'orb' ? 0.8 : 0.5, 0.2);
           });
           foes.hide(S.foes.length); glows.hide(S.foes.length);
           S.drops.forEach((d, i) => { const m = coins.get(i); m.position.set(d.x, 0.5 + Math.abs(Math.sin(time * 5 + i)) * 0.4, d.z); m.rotation.set(Math.PI / 2, time * 3, 0); });
@@ -1188,10 +1409,12 @@
           // Telegraphs and effects.
           let li = 0, ri = 0, fi = 0, si = 0;
           for (const f of S.fx) {
-            if (f.kind === 'line') { const m = lines.get(li++); m.position.set(f.x, 0.08, f.z); m.rotation.y = f.a + Math.PI; m.scale.set(f.wide ? 3.5 : f.thin ? 0.35 : 1.6, 1, f.len); m.material.opacity = 0.25 + 0.25 * Math.sin(time * 20); }
+            if (f.kind === 'line') { const m = lines.get(li++); m.position.set(f.x, 0.08, f.z); m.rotation.y = f.a + Math.PI; m.scale.set(f.wide ? 3.5 : f.thin ? 0.35 : 1.6, 1, f.len); m.material.opacity = 0.25 + 0.25 * Math.sin(time * 20);
+              if (!f.thin && Math.random() < dt * 24) { const t = Math.random() * f.len; emit(sparks, f.x + Math.sin(f.a) * t, 0.2, f.z + Math.cos(f.a) * t, 0, rnd(1, 2.5), 0, 0.35, '#ff5a4a'); } }
             else if (f.kind === 'meteor') {
               const t = 1 - f.life / f.max, m = rings.get(ri++); m.position.set(f.x, 0.1, f.z); m.scale.set(f.r, 1, f.r); m.material.opacity = 0.4 + 0.4 * Math.sin(time * 25);
               meteorS.visible = true; meteorS.position.set(f.x - 8 * (1 - t), 1 + 22 * (1 - t), f.z - 6 * (1 - t)); meteorS.scale.setScalar(3.5 + 2 * t);
+              if (F3 && dt > 0) { F3.trail(meteorS.position.x, meteorS.position.y, meteorS.position.z, '#ff7a1a', 2.2, 0.35); F3.trail(meteorS.position.x, meteorS.position.y, meteorS.position.z, '#fff2b0', 1, 0.2); }
               if (Math.random() < 0.9) emit(flamesC, meteorS.position.x, meteorS.position.y, meteorS.position.z, rnd(-1, 1), rnd(1, 3), rnd(-1, 1), rnd(0.3, 0.5), Math.random() < 0.5 ? '#ff5a10' : '#ffd23f');
               continue;
             }
@@ -1213,12 +1436,15 @@
               m.scale.set(f.r, 1, f.r); m.material.opacity = 0.55 + 0.3 * Math.sin(time * 18);
               if (!f.max) f.max = f.life;
               const fl = fills.get(fi++), k = Math.max(0.05, 1 - f.life / f.max); fl.position.set(f.x, 0.09, f.z); fl.scale.set(f.r * k, 1, f.r * k); fl.material.color.set(f.c || '#ff3b3b'); fl.material.opacity = 0.18 + 0.2 * k;
+              // About to land: the fill flickers hot and sparks rise off the rim.
+              if (k > 0.8) fl.material.opacity = 0.32 + 0.22 * Math.sin(time * 45);
+              if (Math.random() < dt * 8 * f.r) { const a = Math.random() * 6.28; emit(sparks, f.x + Math.sin(a) * f.r, 0.2, f.z + Math.cos(a) * f.r, 0, rnd(1.5, 3.5), 0, 0.4, f.c || '#ff3b3b'); }
             }
           }
           lines.hide(li); rings.hide(ri); fills.hide(fi); shocks2.hide(si); if (!S.fx.some(f => f.kind === 'meteor')) meteorS.visible = false;
           // Fire circle.
           const n = 2 * (S.skills.orbit || 0);
-          for (let k = 0; k < n; k++) { const a = S.orbT + k / n * Math.PI * 2, m = orbs.get(k); m.position.set(S.p.x + Math.sin(a) * 2.6, 1.3, S.p.z + Math.cos(a) * 2.6); m.children[1].scale.setScalar(2.2 + 0.4 * Math.sin(time * 22 + k)); if (Math.random() < dt * 30) emit(flamesC, m.position.x, 1.3, m.position.z, -Math.cos(a) * 1.5, rnd(0.5, 1.5), Math.sin(a) * 1.5, rnd(0.2, 0.35), Math.random() < 0.5 ? '#ff5a10' : '#ffb03a', -1.5); if (Math.random() < dt * 25) emit(sparks, m.position.x, 1.3, m.position.z, rnd(-0.5, 0.5), rnd(1, 2.5), rnd(-0.5, 0.5), rnd(0.25, 0.45), Math.random() < 0.5 ? '#ff7a1a' : '#ffd23f', -2); }
+          for (let k = 0; k < n; k++) { const a = S.orbT + k / n * Math.PI * 2, m = orbs.get(k); if (F3 && dt > 0) F3.trail(S.p.x + Math.sin(a) * 2.6, 1.3, S.p.z + Math.cos(a) * 2.6, '#ff7a1a', 0.9, 0.22); m.position.set(S.p.x + Math.sin(a) * 2.6, 1.3, S.p.z + Math.cos(a) * 2.6); m.children[1].scale.setScalar(2.2 + 0.4 * Math.sin(time * 22 + k)); if (Math.random() < dt * 30) emit(flamesC, m.position.x, 1.3, m.position.z, -Math.cos(a) * 1.5, rnd(0.5, 1.5), Math.sin(a) * 1.5, rnd(0.2, 0.35), Math.random() < 0.5 ? '#ff5a10' : '#ffb03a', -1.5); if (Math.random() < dt * 25) emit(sparks, m.position.x, 1.3, m.position.z, rnd(-0.5, 0.5), rnd(1, 2.5), rnd(-0.5, 0.5), rnd(0.25, 0.45), Math.random() < 0.5 ? '#ff7a1a' : '#ffd23f', -2); }
           orbs.hide(n);
           // Ground zones, frost aura, spinning blades.
           const zs = S.zones || [];
@@ -1243,6 +1469,7 @@
             const a = (S.bladeT || 0) + k / nb * Math.PI * 2, m = bladeM.get(k);
             m.position.set(S.p.x + Math.sin(a) * 3.6, 1.3, S.p.z + Math.cos(a) * 3.6); m.rotation.y = a + time * 12;
             if (Math.random() < dt * 20) emit(sparks, m.position.x, 1.3, m.position.z, 0, 0.5, 0, 0.25, '#dfefff');
+            if (F3 && dt > 0) F3.trail(m.position.x, 1.3, m.position.z, '#bfe0ff', 0.7, 0.2);
           }
           bladeM.hide(nb);
           // Door, spikes, angel.

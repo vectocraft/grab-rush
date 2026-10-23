@@ -23,6 +23,7 @@ Kurallar `CLAUDE.md` içindeki "Play kapalı test → üretim kuralları" bölü
 | G-10 | 23.10.2026 | WhatsApp | Arrow Legends: boss grafikleri yenilensin (model, giriş, saldırı uyarısı, ölüm) (test kullanıcısı geri bildirimi; görev maddesi C9) | Düzeltildi (`gorev-v2` dalında; henüz sürüm derlenmedi) — ayrıntı: `docs/GORSEL-RAPOR-V2.md` |
 | G-11 | 23.10.2026 | WhatsApp | Arrow Legends: yaratıklar kapak görselindeki gibi daha güzel olsun (test kullanıcısı geri bildirimi; görev maddesi C10) | Düzeltildi (`gorev-v2` dalında; henüz sürüm derlenmedi) — ayrıntı: `docs/GORSEL-RAPOR-V2.md` |
 | G-12 | 23.10.2026 | WhatsApp | Arrow Legends: her yetenek kendi efektini göstersin (Hızlı Eller, iyileşme, buz oku vb.) (test kullanıcısı geri bildirimi; görev maddesi C-ek) | Düzeltildi (`gorev-v2` dalında; henüz sürüm derlenmedi) — ayrıntı: `docs/GORSEL-RAPOR-V2.md` |
+| G-13 | 23.10.2026 | iç test | Arrow Legends: kahraman vurulunca çıkması gereken kıvılcım ve kamera sarsıntısı kodu yanlışlıkla bir yorum satırının içinde kalmış, hiç çalışmıyordu | Düzeltildi (`gorev-v2` dalında; henüz sürüm derlenmedi) |
 
 ## Sürümler
 

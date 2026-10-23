@@ -99,7 +99,8 @@
   // Every chapter (10 rooms) has its own world: floor, walls, banners, obstacles, decoration, ground pools and
   // ambient particles (render3d.js reads `th`). The six themes repeat with tougher enemies.
   const CHAPTERS = [
-    { name: () => L('Crypt of Bones', 'Kemik Mahzeni'), floor: '#8d8478', light: '#ffd9a8', fog: '#1a1410', carpet: '#a3202e',
+    { name: () => L('Crypt of Bones', 'Kemik Mahzeni'), floor: '#7f9a94', // teal stone, like the key art (docs/art-target)
+      light: '#ffd9a8', fog: '#1a1410', carpet: '#a3202e',
       th: { tiles: ['floor', 'floor_dirt'], wall: 'wall', wall2: 'wall_cracked', banner: 'banner', obst: ['barrel', 'boxes', 'crates', 'barrels', 'keg', 'table', 'chest'], deco: ['candles', 'rubble', 'coins', 'barrels'], fx: 'dust' } },
     { name: () => L('Sunken Halls', 'Batık Salonlar'), floor: '#5f8f8f', light: '#a8ffe8', fog: '#071a1e', carpet: '#2f7fb0',
       th: { tiles: ['floor', 'floor_rocks'], wall: 'wall_arch', wall2: 'wall', banner: 'banner_blue', obst: ['pir_barrel', 'pir_crate', 'pir_crate2', 'trunk', 'pir_chest'], deco: ['pir_bottle', 'coins', 'rubble', 'bottle'], pool: 'water', fx: 'bubbles' } },
@@ -398,7 +399,7 @@
   }
   const fx = (kind, x, z, c, n) => { if (R3 && R3.fx) R3.fx(kind, x, z, c, n); };
   function banner(txt, sub) { S.banner = { txt, sub: sub || '', life: 2.4 }; }
-  function floatText(x, z, txt, c, big) { S.texts.push({ x, z, txt, c, life: 0.9, big }); }
+  function floatText(x, z, txt, c, big) { S.texts.push({ x, z, txt, c, life: big ? 1.05 : 0.9, max: big ? 1.05 : 0.9, big, dx: (Math.random() - 0.5) * 1.6 }); }
 
   // ---------- Combat ----------
   function fire() {
@@ -436,15 +437,18 @@
     let dmg = base * (1 + st.dmg) * (crit ? 2 + st.critDmg - 1 + 0.4 * sk('crit') : 1) * (0.92 + Math.random() * 0.16);
     if (e.boss && sk('giant')) dmg *= 1 + 0.3 * sk('giant');
     if (!e.boss && sk('execute') && e.hp - dmg > 0 && e.hp - dmg < e.max * 0.15) { dmg = e.hp; floatText(e.x, e.z, L('EXECUTE!', 'İNFAZ!'), '#c08cff', true); fx('crit', e.x, e.z, '#c08cff', 1); }
-    if (src === 'shot' && !e.boss && sk('headshot') && Math.random() < 0.05 * sk('headshot')) { dmg = Math.max(dmg, e.hp); floatText(e.x, e.z, L('HEADSHOT!', 'KAFADAN!'), '#ffd23f', true); fx('crit', e.x, e.z, '#ffd23f', 1); S.hitStop = 0.09; }
+    if (src === 'shot' && !e.boss && sk('headshot') && Math.random() < 0.05 * sk('headshot')) { dmg = Math.max(dmg, e.hp); floatText(e.x, e.z, L('HEADSHOT!', 'KAFADAN!'), '#ffd23f', true); fx('crit', e.x, e.z, '#ffd23f', 1); fx('headshot', e.x, e.z); S.hitStop = 0.09; }
     e.hp -= dmg; e.flash = 0.12;
-    floatText(e.x, e.z, Math.round(dmg), crit ? '#ff5a5a' : '#ffffff', crit);
+    // Damage numbers (Archero style): crits big and golden with '!', damage over time in its element's colour.
+    const NUM_C = { burn: '#ff9a3a', fire: '#ff9a3a', poison: '#9dff5a', aura: '#9fe8ff', meteor: '#ffb04a', nova: '#d7a8ff', orb: '#ffb04a' };
+    floatText(e.x, e.z, Math.round(dmg) + (crit ? '!' : ''), crit ? '#ffd23f' : NUM_C[src] || '#ffffff', crit);
     fx('hit', e.x, e.z, crit ? '#ff5a5a' : src === 'burn' ? '#ff8a1f' : '#ffe9a8', crit ? 14 : 7);
+    if (src === 'shot') fx('shothit', e.x, e.z, null, crit ? 2 : 1);
     if (crit) { S.shake = Math.max(S.shake || 0, 0.35); S.hitStop = 0.07; fx('crit', e.x, e.z, '#ffd23f', 1); }
     if (src === 'shot') {
       if (sk('fire')) { if (!(e.burn > 0)) fx('ignite', e.x, e.z, '#ff8a1f', 1); e.burn = 3; }
       if (sk('ice')) { if (!(e.slow > 0)) fx('freeze', e.x, e.z, '#9be7ff', 1); e.slow = 2; }
-      if (sk('bolt')) { let n = 0; for (const o of S.enemies) if (o !== e && o.hp > 0 && dist(o, e) < 7 && n < 2) { n++; o.hp -= base * 0.3; o.flash = 0.12; S.fx.push({ kind: 'zap', x: e.x, z: e.z, x2: o.x, z2: o.z, life: 0.2 }); if (o.hp <= 0) kill(o); } }
+      if (sk('bolt')) { e.shock = 0.5; let n = 0; for (const o of S.enemies) if (o !== e && o.hp > 0 && dist(o, e) < 7 && n < 2) { n++; o.hp -= base * 0.3; o.flash = 0.12; o.shock = 0.6; S.fx.push({ kind: 'zap', x: e.x, z: e.z, x2: o.x, z2: o.z, life: 0.2 }); if (o.hp <= 0) kill(o); } }
     }
     if (e.hp <= 0) kill(e);
   }
@@ -452,12 +456,13 @@
     if (e.killed) { e.hp = 0; e.state = 'dead'; return; }
     e.killed = true; e.hp = 0; e.state = 'dead'; e.st = 0.9;
     fx('die', e.x, e.z, e.boss ? '#ffd56a' : '#e8e0d0', e.boss ? 60 : 22); if (e.boss) S.shake = 1;
+    if (e.slow > 0 && sk('ice')) fx('shatter', e.x, e.z);
     if (e.elite) { for (let k = 0; k < 8; k++) enemyShot(e, k / 8 * Math.PI * 2, 7, 'orb'); fx('nova', e.x, e.z, '#ffd23f', 1); S.fx.push({ kind: 'boom', x: e.x, z: e.z, r: 3, life: 0.4, c: '#ffd23f' }); }
     const f = FOES[e.kind], g = Math.round(f.gold * (e.boss ? 25 : e.elite ? 3 : 1) * (1 + 0.05 * G.talents.gold) * (0.8 + Math.random() * 0.4) * Math.pow(1.15, S.chapter - 1) * (1 + 0.2 * sk('greed')));
     S.drops.push({ x: e.x, z: e.z, gold: g, xp: f.xp * (e.boss ? 10 : 1), t: 0 });
     S.kills++;
     const heal = (sk('vamp') * 0.02 + S.st.lifeKill) * S.p.max;
-    if (heal > 0) { S.p.hp = Math.min(S.p.max, S.p.hp + heal); fx('heal', S.p.x, S.p.z, '#7dffae', 1); floatText(S.p.x, S.p.z, '+' + Math.round(heal), '#7dffae'); }
+    if (heal > 0) { S.p.hp = Math.min(S.p.max, S.p.hp + heal); if (sk('vamp')) fx('drain', e.x, e.z, S.p); fx('heal', S.p.x, S.p.z, sk('vamp') ? '#ff5a7a' : '#7dffae', 1); floatText(S.p.x, S.p.z, '+' + Math.round(heal), '#7dffae'); }
     Sfx.play(e.boss ? 'boss' : 'pop');
     if (e.boss) {
       UI.vibrate(80);
@@ -481,9 +486,10 @@
     const p = S.p, st = S.st;
     if (p.inv > 0 || p.dead || mode !== 'play') return;
     if (sk('shield') && !(S.shieldT > 0)) { S.shieldT = 8 - 2 * (sk('shield') - 1); p.inv = 0.5; fx('shieldpop', p.x, p.z, '#8fd8ff', 1); floatText(p.x, p.z, L('BLOCKED', 'ENGELLENDİ'), '#8fd8ff'); return; }
-    if (Math.random() < st.dodge + 0.1 * sk('dodge')) { floatText(p.x, p.z, L('DODGE', 'KAÇTI'), '#9fe7ff'); fx('blink', p.x, p.z); p.inv = 0.25; return; }
+    if (Math.random() < st.dodge + 0.1 * sk('dodge')) { floatText(p.x, p.z, L('DODGE', 'KAÇTI'), '#9fe7ff'); fx('dodge', p.x, p.z); p.inv = 0.25; return; }
     d *= 1 - Math.min(0.6, st.block);
-    p.hp -= d; p.inv = 0.4; S.hurtT = 0.4; if (S.dmgLog) { const k = src || '?'; S.dmgLog[k] = (S.dmgLog[k] || 0) + d; S.lastHit = k; } // dmgLog: balance bot S.shake = Math.max(S.shake || 0, 0.3); fx('hurt', p.x, p.z, '#ff4d5a', 10);
+    p.hp -= d; p.inv = 0.4; S.hurtT = 0.4; if (S.dmgLog) { const k = src || '?'; S.dmgLog[k] = (S.dmgLog[k] || 0) + d; S.lastHit = k; } // dmgLog: balance bot
+    S.shake = Math.max(S.shake || 0, 0.3); fx('hurt', p.x, p.z, '#ff4d5a', 10);
     floatText(p.x, p.z, '-' + Math.round(d), '#ff6b6b');
     UI.vibrate(30); Sfx.play('hit');
     if (p.hp <= 0 && sk('second') && !S.secondUsed) { S.secondUsed = true; p.hp = p.max * 0.5; p.inv = 2; fx('levelup', p.x, p.z, '#ffe08a', 50); floatText(p.x, p.z, L('SECOND WIND!', 'İKİNCİ NEFES!'), '#ffe08a', true); return; }
@@ -733,7 +739,7 @@
     if (S.zones && S.zones.length) {
       for (const zn of S.zones) {
         zn.life -= dt; zn.tick = (zn.tick || 0) - dt;
-        if (zn.tick <= 0) { zn.tick = 0.4; for (const e of S.enemies) if (e.hp > 0 && e.state !== 'rise' && Math.hypot(e.x - zn.x, e.z - zn.z) < zn.r + e.r) { hurtEnemy(e, sAtk * zn.dmg, zn.kind); if (zn.kind === 'fire') e.burn = Math.max(e.burn || 0, 1); } }
+        if (zn.tick <= 0) { zn.tick = 0.4; for (const e of S.enemies) if (e.hp > 0 && e.state !== 'rise' && Math.hypot(e.x - zn.x, e.z - zn.z) < zn.r + e.r) { hurtEnemy(e, sAtk * zn.dmg, zn.kind); if (zn.kind === 'fire') e.burn = Math.max(e.burn || 0, 1); else e.psn = 0.6; } }
       }
       S.zones = S.zones.filter(zn => zn.life > 0);
     }
@@ -791,7 +797,7 @@
       s.life -= dt; s.x += s.vx * dt; s.z += s.vz * dt;
       const out = s.x < -RW || s.x > RW || s.z < -RH || s.z > RH;
       if (out || inProp(s.x, s.z)) {
-        if (s.wall > 0 && out) { s.wall--; if (s.x < -RW || s.x > RW) s.vx *= -1; else s.vz *= -1; s.x = clamp(s.x, -RW, RW); s.z = clamp(s.z, -RH, RH); s.a = Math.atan2(s.vx, s.vz); }
+        if (s.wall > 0 && out) { s.wall--; if (s.x < -RW || s.x > RW) s.vx *= -1; else s.vz *= -1; s.x = clamp(s.x, -RW, RW); s.z = clamp(s.z, -RH, RH); s.a = Math.atan2(s.vx, s.vz); fx('wallbounce', s.x, s.z); }
         else s.life = 0;
         continue;
       }
@@ -803,11 +809,12 @@
         if (s.ric > 0) {
           s.ric--;
           const n = nearestEnemy(e, s.hit);
-          if (n) { const a = Math.atan2(n.x - e.x, n.z - e.z); s.vx = Math.sin(a) * 30; s.vz = Math.cos(a) * 30; s.a = a; s.x = e.x; s.z = e.z; s.life = 1; break; }
+          if (n) { const a = Math.atan2(n.x - e.x, n.z - e.z); s.vx = Math.sin(a) * 30; s.vz = Math.cos(a) * 30; s.a = a; s.x = e.x; s.z = e.z; s.life = 1; fx('ricochet', e.x, e.z); break; }
         }
         if (sk('poison') && !s.child) (S.zones = S.zones || []).push({ kind: 'poison', x: e.x, z: e.z, r: 1.6 + 0.3 * sk('poison'), life: 2.5 + 0.5 * sk('poison'), max: 2.5 + 0.5 * sk('poison'), dmg: 0.1 + 0.06 * sk('poison') });
+        if (sk('split') && !s.child) fx('split', e.x, e.z);
         if (sk('split') && !s.child) for (const d of [-0.7, 0.7]) { const a2 = s.a + d * (sk('split') > 1 ? 1.3 : 1); S.shots.push({ x: e.x, z: e.z, vx: Math.sin(a2) * 26, vz: Math.cos(a2) * 26, a: a2, life: 0.6, hit: [e], ric: 0, pierce: 0, wall: 0, child: 1 }); }
-        if (s.pierce > 0) { s.pierce--; continue; }
+        if (s.pierce > 0) { s.pierce--; fx('pierce', e.x, e.z, s.a); continue; }
         s.life = 0; break;
       }
     }
@@ -824,6 +831,7 @@
       if (e.burn > 0) { e.burn -= dt; e.burnT = (e.burnT || 0) - dt; if (e.burnT <= 0) { e.burnT = 0.5; hurtEnemy(e, atk * 0.12, 'burn'); } }
       if (e.state === 'dead') continue;
       e.slow = Math.max(0, e.slow - dt);
+      if (e.shock > 0) e.shock -= dt; if (e.psn > 0) e.psn -= dt; // shown by the renderer only
       const x0 = e.x, z0 = e.z;
       think(e, dt);
       const dx = e.x - x0 + e.kbx * dt, dz = e.z - z0 + e.kbz * dt; e.x = x0; e.z = z0;
@@ -1261,6 +1269,7 @@
       if (k === 'hp' || k === 'hpS') { const add = S.p.max * (k === 'hp' ? 0.2 : 0.08); S.p.max += add; S.p.hp = Math.min(S.p.max, S.p.hp + add); }
       if (k === 'potion') { S.p.hp = Math.min(S.p.max, S.p.hp + S.p.max * 0.3); fx('heal', S.p.x, S.p.z, '#ff8ab0', 1); }
       if (k === 'hp' || k === 'hpS') fx('heal', S.p.x, S.p.z, '#ffcf5a', 1);
+      fx('skill', S.p.x, S.p.z, k); // every skill shows its own effect when picked (render3d.js SKILL_FX)
       const heal = 0.02 * G.talents.heal * S.p.max; if (heal) S.p.hp = Math.min(S.p.max, S.p.hp + heal);
       closeOverlay(); mode = 'play';
       if (S.pending) levelUpScreen();
@@ -1439,13 +1448,18 @@
       if (e.hp <= 0 || e.state === 'rise' || e.boss) continue;
       const q = W2S(e.x, e.z, 2.9 * e.scale * (e.scale > 2 ? 1.2 : 1.5));
       bar(q.x, q.y, 34, 4, e.hp / e.max, '#ff4d5a');
+      // Status icons over the bar (Soul Knight / Archero): burning, frozen, shocked, poisoned.
+      const ic = (e.burn > 0 ? '🔥' : '') + (e.slow > 0 ? '❄️' : '') + (e.shock > 0 ? '⚡' : '') + (e.psn > 0 ? '☠️' : '');
+      if (ic) { ctx.font = '11px sans-serif'; ctx.textAlign = 'left'; ctx.textBaseline = 'middle'; ctx.fillText(ic, q.x + 19, q.y + 2); }
     }
     const q = W2S(p.x, p.z, 4.3);
     bar(q.x, q.y, 46, 6, p.hp / p.max, '#3be07a');
     text(String(Math.ceil(p.hp)), q.x, q.y - 8, 11, '#fff', '#0b5e29');
     const boss = S.enemies.find(e => e.boss && e.hp > 0);
     if (boss && !S.intro) { const y = UI.safeArea().hudBottom + 30; bar(innerWidth / 2, y, innerWidth * 0.8, 12, boss.hp / boss.max, '#c81d3a'); text('👑 ' + (boss.bossName || ''), innerWidth / 2, y - 10, 13); }
-    for (const t of S.texts) { const w = W2S(t.x, t.z, 4.6 + (0.9 - t.life) * 3); ctx.globalAlpha = Math.min(1, t.life * 2.5); text(t.txt, w.x, w.y, t.big ? 22 : 15, t.c, '#1a0a0a'); }
+    // Damage numbers pop in big, settle, drift a little sideways and float up (crits pop hardest).
+    for (const t of S.texts) { const age = (t.max || 0.9) - t.life, w = W2S(t.x + (t.dx || 0) * age, t.z, 4.6 + age * 3), pop = age < 0.12 ? 1 + (1 - age / 0.12) * (t.big ? 0.9 : 0.5) : 1;
+      ctx.globalAlpha = Math.min(1, t.life * 2.5); text(t.txt, w.x, w.y, (t.big ? 26 : 16) * pop, t.c, t.big ? '#5a0a00' : '#1a0a0a'); }
     ctx.globalAlpha = 1;
     if (S.intro) {
       const I = S.intro, a = clamp(Math.min(I.t / 0.35, (I.dur - I.t) / 0.35), 0, 1), bh = innerHeight * 0.1 * a, W = innerWidth;
