@@ -7,7 +7,8 @@
   if (!window.THREE) return;
   const T = window.THREE;
   const CX = 200, CZ = 360, SQUAD_Y = 610, TILE = 60, NEAR_Y = 1050, FAR_Y = -1800;
-  const MAX_S = 64, MAX_E = 240, MAX_B = 800, MAX_FX = 400;
+  // MAX_F: extra marchers that only thicken the crowd on screen (the squad count in the game is unchanged).
+  const MAX_S = 64, MAX_F = 96, MAX_SG = MAX_S + MAX_F, MAX_E = 240, MAX_B = 800, MAX_FX = 400;
   const TAU = Math.PI * 2;
 
   // ---------- Procedural textures ----------
@@ -60,6 +61,9 @@
       g.lineJoin = 'round'; g.lineCap = 'round'; g.lineWidth = 12;
       const chev = (dy, col) => { g.strokeStyle = col; g.beginPath(); g.moveTo(w * 0.38, h * 0.44 + dy); g.lineTo(w * 0.5, h * 0.57 + dy); g.lineTo(w * 0.62, h * 0.44 + dy); g.stroke(); };
       chev(3, 'rgba(0,0,0,.18)'); chev(0, good ? 'rgba(190,230,255,.38)' : 'rgba(255,200,190,.30)');
+      // Night is baked in: the stone is darkened toward violet (the tiles are drawn unlit, MeshBasic, which is cheaper
+      // than lighting the whole road), then the rails go on top at full brightness so they glow.
+      g.globalCompositeOperation = 'multiply'; g.fillStyle = good ? '#8e96d0' : '#8c6884'; g.fillRect(0, 0, w, h); g.globalCompositeOperation = 'source-over';
       // Edge rails: dark channel, bright coloured light strip, white core.
       for (const x of [0, w - m]) {
         g.fillStyle = '#20242c'; g.fillRect(x, 0, m, h);
@@ -122,11 +126,21 @@
     g.fillStyle = grd; g.fillRect(0, 0, w, h);
     g.fillStyle = 'rgba(255,255,255,.25)'; for (let y = 0; y < h; y += 8) g.fillRect(0, y, w, 2);
   });
-  const skyTex = () => tex(4, 256, (g, w, h) => {
+  // Dusk sky: deep navy at the top, violet toward a glowing horizon, a sprinkle of stars (all baked, zero cost).
+  const skyTex = () => tex(256, 512, (g, w, h) => {
     const grd = g.createLinearGradient(0, 0, 0, h);
-    grd.addColorStop(0, '#2f86e8'); grd.addColorStop(0.5, '#7cc4ff'); grd.addColorStop(1, '#e8f6ff');
+    grd.addColorStop(0, '#07061c'); grd.addColorStop(0.35, '#1a1248'); grd.addColorStop(0.62, '#3c1f72'); grd.addColorStop(0.82, '#7a3a9a'); grd.addColorStop(1, '#c56aa8');
     g.fillStyle = grd; g.fillRect(0, 0, w, h);
+    for (let i = 0; i < 260; i++) { const y = Math.pow(Math.random(), 1.6) * h * 0.7, a = 0.25 + Math.random() * 0.75 * (1 - y / (h * 0.7)); g.fillStyle = 'rgba(255,255,255,' + a.toFixed(2) + ')'; const r = Math.random() < 0.08 ? 1.6 : 0.8; g.fillRect(Math.random() * w, y, r, r); }
+    // Faint cloud bands.
+    for (let i = 0; i < 9; i++) { const y = h * (0.15 + Math.random() * 0.5), r = g.createRadialGradient(Math.random() * w, y, 0, w / 2, y, w * 0.7); r.addColorStop(0, 'rgba(140,90,200,.12)'); r.addColorStop(1, 'rgba(140,90,200,0)'); g.fillStyle = r; g.fillRect(0, y - 40, w, 80); }
   });
+  // Neon frame glow for the gates: a bright rounded-rect outline that fades out on both sides.
+  const frameGlowTex = () => tex(256, 128, (g, w, h) => {
+    for (let k = 14; k >= 1; k--) { g.strokeStyle = 'rgba(255,255,255,' + (k === 1 ? 1 : 0.05 + 0.5 / k).toFixed(3) + ')'; g.lineWidth = k * 2.2; g.beginPath(); g.roundRect ? g.roundRect(26, 22, w - 52, h - 30, 10) : g.rect(26, 22, w - 52, h - 30); g.stroke(); }
+  });
+  // Soft round glow (lamps, light pools, engine glows).
+  const softTex = () => tex(64, 64, (g) => { const r = g.createRadialGradient(32, 32, 0, 32, 32, 32); r.addColorStop(0, 'rgba(255,255,255,1)'); r.addColorStop(0.3, 'rgba(255,255,255,.45)'); r.addColorStop(1, 'rgba(255,255,255,0)'); g.fillStyle = r; g.fillRect(0, 0, 64, 64); });
 
   // What each squad skin wears (the shop name/price live in game.js SKINS under the same key):
   // hat: helmet | beret | plume | spike | horns | crown; cape: cape colour; fx: trail particles; glow: emissive suit.
@@ -143,6 +157,7 @@
   window.Suru3D = {
     GEAR,
     init(canvas, opts) {
+      if (!window.Fx3D) return null;
       let renderer;
       try { renderer = new T.WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance', alpha: !!(opts && opts.alpha), preserveDrawingBuffer: !!(opts && opts.alpha) }); } catch (e) { return null; }
       if (!renderer.getContext()) return null;
@@ -151,17 +166,24 @@
       renderer.shadowMap.enabled = false;
       if ('outputColorSpace' in renderer) renderer.outputColorSpace = T.SRGBColorSpace;
       renderer.toneMapping = T.ACESFilmicToneMapping;
-      renderer.toneMappingExposure = 1.0;
+      renderer.toneMappingExposure = 1.1;
 
       const scene = new T.Scene();
       scene.background = skyTex();
-      scene.fog = new T.Fog(0xcfeaff, 1300, 2900);
+      // Night: violet haze in the distance, a cool moon key light and a blue-violet sky fill. The road reads by its
+      // own neon (emissive rails, gates, lamps) rather than by extra lights.
+      scene.fog = new T.Fog(0x2a1a52, 1100, 2700);
       const camera = new T.PerspectiveCamera(46, 1, 10, 3200);
-      scene.add(new T.HemisphereLight(0xd6ecff, 0x35583a, 1.2));
-      const sun = new T.DirectionalLight(0xfff1dc, 2.3);
+      scene.add(new T.HemisphereLight(0x9aa6ff, 0x2a1838, 1.05));
+      const sun = new T.DirectionalLight(0xd8dcff, 2.0);
       sun.position.set(-220, 420, 160); sun.target.position.set(0, 0, -200);
       scene.add(sun, sun.target);
       const muzzleLight = { position: new T.Vector3(), intensity: 0 }, boomLight = { position: new T.Vector3(), intensity: 0 };
+      // Shared effect system (ortak/fx3d.js): sparks, muzzle flashes, rock chips, scorch marks, lightning — all pooled
+      // and animated on the GPU. One "unit" here is about a soldier's hand.
+      const fx = Fx3D.create(scene, { unit: 5, particles: 1400, rocks: 64, decals: 16, bolts: 12, budget: 420 });
+      const seenB = new WeakSet(), rnd = (a, b) => a + Math.random() * (b - a);
+      let prevBullets = [], skyBoltT = 1.5, lowFx = false;
 
       const dummy = new T.Object3D(), col = new T.Color(), v3 = new T.Vector3();
       // Explosion flashes: a burst of warm light on top of the fireball.
@@ -215,7 +237,7 @@
         if (c && m.instanceColor) m.setColorAt(n, c);
       }
       function done(m, n) { if (!m) return; m.count = n; m.instanceMatrix.needsUpdate = true; if (m.instanceColor) m.instanceColor.needsUpdate = true; if (m.userData.ol) m.userData.ol.count = n; }
-      const C_ = s => new T.Color(s);
+      const C_ = s => new T.Color(s), WHITE = new T.Color('#ffffff');
 
       const blobTex = tex(64, 64, (g) => { const r = g.createRadialGradient(32, 32, 2, 32, 32, 31); r.addColorStop(0, 'rgba(0,0,0,.55)'); r.addColorStop(0.6, 'rgba(0,0,0,.3)'); r.addColorStop(1, 'rgba(0,0,0,0)'); g.fillStyle = r; g.fillRect(0, 0, 64, 64); });
       const blobs = inst(new T.PlaneGeometry(1, 1).rotateX(-Math.PI / 2), new T.MeshBasicMaterial({ map: blobTex, transparent: true, depthWrite: false }), 520, false, false);
@@ -227,10 +249,10 @@
       const ROAD_LEN = NEAR_Y - FAR_Y, roadZ = (NEAR_Y + FAR_Y) / 2 - CZ;
       const asphalt = asphaltTex(); asphalt.repeat.set(3, ROAD_LEN / 120);
       const road = add(scene, new T.BoxGeometry(352, 4, ROAD_LEN), std('#e8eef7'), 0, -2, roadZ, false);
-      const deck = add(scene, new T.BoxGeometry(372, 26, ROAD_LEN), std('#5d5650'), 0, -17, roadZ, false); // stone embankment under the road
+      const deck = add(scene, new T.BoxGeometry(372, 26, ROAD_LEN), std('#3a3448'), 0, -17, roadZ, false); // stone embankment under the road
       const curb = curbTex(); curb.repeat.set(1, ROAD_LEN / 40);
       for (const sx of [-1, 1]) add(scene, new T.BoxGeometry(10, 6, ROAD_LEN), std('#ffffff', { map: curb }), sx * 181, 1, roadZ);
-      const walkMat = std('#ffffff', { map: paverTex() }); walkMat.map.repeat.set(2, ROAD_LEN / 17); walkMat.map.shared = true;
+      const walkMat = std('#8e8cab', { map: paverTex() }); walkMat.map.repeat.set(2, ROAD_LEN / 17); walkMat.map.shared = true;
       for (const sx of [-1, 1]) add(scene, new T.BoxGeometry(34, 3, ROAD_LEN), walkMat, sx * 203, 0.5, roadZ, false);
       // Water all around (theme sea colour), grassy banks along the road for the trees and lamps.
       const waterMap = waterTex(); waterMap.repeat.set(30, 30);
@@ -242,7 +264,7 @@
         add(scene, new T.BoxGeometry(14, 22, ROAD_LEN + 600), std('#f1dfae'), sx * 476, -15, roadZ - 300, false);
       }
       // Clouds far away.
-      const cloudMat = new T.MeshLambertMaterial({ color: '#ffffff', emissive: '#b8d8f0', emissiveIntensity: 0.35, flatShading: true });
+      const cloudMat = new T.MeshLambertMaterial({ color: '#4a3a7a', emissive: '#7a4ab0', emissiveIntensity: 0.4, flatShading: true });
       for (let i = 0; i < 9; i++) {
         const cl = new T.Group(); cl.position.set((i - 4) * 420 + (i * 97) % 160, 420 + (i * 53) % 180, -2300 - (i % 3) * 200);
         for (let k = 0; k < 4; k++) { const b = new T.Mesh(new T.IcosahedronGeometry(60 + k * 12, 1), cloudMat); b.position.set(k * 70 - 100, (k % 2) * 25, 0); b.scale.y = 0.6; cl.add(b); }
@@ -250,14 +272,14 @@
       }
       // Lane tiles and separators.
       const tileGeo = new T.PlaneGeometry(1, TILE); tileGeo.rotateX(-Math.PI / 2);
-      const tilesR = inst(tileGeo, std('#ffffff', { map: laneTile('r') }), 160, false, false);
-      const tilesE = inst(tileGeo, std('#ffffff', { map: laneTile('e') }), 160, false, false);
+      const tilesR = inst(tileGeo, new T.MeshBasicMaterial({ map: laneTile('r') }), 160, false, false);
+      const tilesE = inst(tileGeo, new T.MeshBasicMaterial({ map: laneTile('e') }), 160, false, false);
       tilesR.receiveShadow = tilesE.receiveShadow = true;
       const seps = inst(new T.BoxGeometry(1, 1, 1), lam('#ffffff'), 200, true, true);
       const sepCols = [C_('#f4f1ea'), C_('#e23b3b')];
       // Distant hills.
       const hillMat = new T.MeshLambertMaterial({ color: '#5d9d58', flatShading: true });
-      const peakMat = new T.MeshLambertMaterial({ color: '#7f93b4', flatShading: true }), snowMat = new T.MeshLambertMaterial({ color: '#f4f8ff', emissive: '#9fb6d8', emissiveIntensity: 0.25, flatShading: true });
+      const peakMat = new T.MeshLambertMaterial({ color: '#3c3a72', flatShading: true }), snowMat = new T.MeshLambertMaterial({ color: '#c9c6f2', emissive: '#5a4a9a', emissiveIntensity: 0.35, flatShading: true });
       for (let i = 0; i < 12; i++) {
         const h = add(scene, new T.ConeGeometry(220 + (i * 53) % 140, 200 + (i * 71) % 160, 7), hillMat, (i - 5.5) * 280 + ((i * 37) % 90), 70, -2150 - (i % 3) * 120, false);
         h.rotation.y = i;
@@ -276,7 +298,12 @@
       const crowns = inst(crownGeo, new T.MeshLambertMaterial({ color: '#ffffff', flatShading: true }), 120, true, true);
       const rocks = inst(new T.DodecahedronGeometry(1, 0), new T.MeshLambertMaterial({ color: '#9a9aa2', flatShading: true }), 30, false, true);
       const poles = inst(new T.CylinderGeometry(1.1, 1.4, 44, 6), std('#39414d', { metalness: 0.6, roughness: 0.4 }), 24, false, true);
-      const lampHeads = inst(new T.BoxGeometry(12, 2.4, 5), std('#2c333d', { emissive: '#fff2c0', emissiveIntensity: 0.25 }), 24, false, false);
+      const lampHeads = inst(new T.BoxGeometry(12, 2.4, 5), std('#2c333d', { emissive: '#ffe6a8', emissiveIntensity: 1.6 }), 24, false, false);
+      // Lamp light without lights: a warm halo facing the camera and a pool of light on the pavement (additive).
+      const soft = softTex(); soft.shared = true;
+      const lampGlow = inst(new T.PlaneGeometry(1, 1), new T.MeshBasicMaterial({ map: soft, color: '#ffc870', transparent: true, depthWrite: false, blending: T.AdditiveBlending }), 24, false, false);
+      const lampPool = inst(new T.PlaneGeometry(1, 1).rotateX(-Math.PI / 2), new T.MeshBasicMaterial({ map: soft, color: '#c08a44', transparent: true, depthWrite: false, blending: T.AdditiveBlending }), 24, false, false);
+      lampGlow.renderOrder = lampPool.renderOrder = 4;
       const pines = inst(new T.ConeGeometry(1, 1, 7), new T.MeshLambertMaterial({ color: '#ffffff', flatShading: true }), 120, true, true);
       const bushes = inst(new T.IcosahedronGeometry(1, 1), new T.MeshLambertMaterial({ color: '#ffffff', flatShading: true }), 120, true, false);
       const flagGeo = new T.PlaneGeometry(1, 1, 6, 1).translate(0.5, 0, 0);
@@ -295,6 +322,8 @@
       for (let i = 0; i < 60; i++) { const side = i % 2 ? 1 : -1, r = (i * 6563) % 1000 / 1000;
         decos.push({ kind: 'bush', x: side * (226 + r * 26), s: i * DECO_P / 60 + 11, sz: 0.7 + r * 0.6, c: C_(['#4fa04a', '#62b34f', '#3f8f45', '#7cbf52'][i % 4]), rot: r * TAU }); }
       for (let i = 0; i < 24; i++) decos.push({ kind: 'flag', x: (i % 2 ? 1 : -1) * 214, s: Math.floor(i / 2) * DECO_P / 12 + DECO_P / 24, sz: 1, side: i % 2 });
+      // Moonlit foliage: shift the greens toward blue-teal (the scene reads as night, the gates and soldiers pop).
+      const NIGHT = C_('#1c2a66'); decos.forEach(d => { if (d.c) d.c.lerp(NIGHT, 0.3); });
 
       // ---------- Soldiers ----------
       function crowd(max, o) {
@@ -328,27 +357,58 @@
         cape: new T.BoxGeometry(6.4, 10, 0.5).translate(0, -5, 0),
       };
       const gear = {
-        beret: inst(hatGeo.beret, toon('#ffffff'), MAX_S, true, false, 0.35),
-        plume: inst(hatGeo.plume, toon('#ffffff'), MAX_S, true, false, 0.3),
-        spike: inst(hatGeo.spike, toon('#c9ced6', { emissive: '#222' }), MAX_S, false, false, 0.3),
-        horn: inst(hatGeo.horn, toon('#f3ead2'), MAX_S * 2, false, false, 0.3),
-        crown: inst(hatGeo.crown, goldM, MAX_S, false, false, 0.3),
-        crownTip: inst(hatGeo.crownTip, goldM, MAX_S * 5, false, false),
-        cape: inst(hatGeo.cape, toon('#ffffff', { side: T.DoubleSide }), MAX_S, true, false, 0.3),
+        beret: inst(hatGeo.beret, toon('#ffffff'), MAX_SG, true, false, 0.35),
+        plume: inst(hatGeo.plume, toon('#ffffff'), MAX_SG, true, false, 0.3),
+        spike: inst(hatGeo.spike, toon('#c9ced6', { emissive: '#222' }), MAX_SG, false, false, 0.3),
+        horn: inst(hatGeo.horn, toon('#f3ead2'), MAX_SG * 2, false, false, 0.3),
+        crown: inst(hatGeo.crown, goldM, MAX_SG, false, false, 0.3),
+        crownTip: inst(hatGeo.crownTip, goldM, MAX_SG * 5, false, false),
+        cape: inst(hatGeo.cape, toon('#ffffff', { side: T.DoubleSide }), MAX_SG, true, false, 0.3),
       };
+      // The extra marchers: same parts and materials as the squad, minus outline, belt, eyes and pack (they stand
+      // inside and behind the formation, where those never show), so the denser crowd costs a few cheap draw calls.
+      const liteOf = (m, geo) => inst(geo, m.material, MAX_F, !!m.instanceColor, false);
+      const liteLimb = (r, l) => new T.CapsuleGeometry(r, l, 1, 4).translate(0, -l / 2 - r * 0.4, 0);
+      const lite = { legL: liteOf(squad.legL, liteLimb(1.35, 4)), legR: liteOf(squad.legR, liteLimb(1.35, 4)), armL: liteOf(squad.armL, liteLimb(1.05, 3.6)), armR: liteOf(squad.armR, liteLimb(1.05, 3.6)),
+        torso: liteOf(squad.torso, new T.CapsuleGeometry(3, 4.4, 2, 7)), head: liteOf(squad.head, new T.SphereGeometry(2.7, 8, 6)), helmet: liteOf(squad.helmet, new T.SphereGeometry(3.15, 8, 5, 0, TAU, 0, Math.PI / 2)) };
+      // Filler spots: the gaps of the formation grid (a hex-packed crowd), then extra back rows past 60 soldiers.
+      const fillCache = { n: -1, pts: [] };
+      function fillersFor(n, form) {
+        if (fillCache.n === n) return fillCache.pts;
+        const pts = [], cols = Math.min(6, n), rows = Math.ceil(form.length / cols);
+        if (n >= 8) {
+          for (let r = 0; r < rows - 1; r++) for (let c = 0; c < cols - 1; c++) if ((r + 1) * cols + c + 1 < form.length) pts.push({ x: (c - (cols - 1) / 2) * 12 + 6, y: r * 11 + 5.5 });
+          const extra = Math.min(MAX_F - pts.length, 44, Math.round(Math.max(0, n - 60) * 0.8));
+          for (let k = 0; k < extra; k++) { const c = k % 11, r = Math.floor(k / 11); pts.push({ x: (c - 5) * 6 + (r % 2) * 3, y: rows * 11 + r * 8 }); }
+        }
+        pts.forEach((p, i) => { p.x += Math.sin(i * 12.9898) * 1.6; p.y += Math.cos(i * 7.233) * 1.4; });
+        fillCache.n = n; fillCache.pts = pts.slice(0, MAX_F); return fillCache.pts;
+      }
       gear.crown.material.side = T.DoubleSide;
-      const gearTrail = []; // renderer-side trail particles of the skin
       const foes = crowd(MAX_E, { leg: '#3a1418', skin: '#d8a27a', spike: '#c9c9c9', club: true });
       const foeShield = inst(new T.BoxGeometry(11, 13, 1.6), std('#9aa3b0', { emissive: '#1a1f28' }), 80, false, false);
       const foeRifle = inst(new T.BoxGeometry(1.4, 1.8, 14), std('#1c1f24'), 80, false, false);
       const foeBomb = inst(new T.SphereGeometry(3.4, 12, 10), new T.MeshBasicMaterial({ color: '#ffffff' }), 80, true, false);
       const mineBody = inst(new T.CylinderGeometry(9, 10, 4, 16), std('#3a3f36'), 60, false, false);
       const mineLight = inst(new T.SphereGeometry(2.4, 10, 8), new T.MeshBasicMaterial({ color: '#ff2a2a' }), 60, false, false);
-      const eShots = inst(new T.BoxGeometry(1, 1, 1), additive('#ff3b3b'), 300, false, false);
-      const gunBox = inst(new T.BoxGeometry(1, 1, 1), std('#2b2d33', { metalness: 0.5, roughness: 0.45 }), MAX_S, false, true);
+      // Glowing streaks for every bullet: two crossed quads (visible from any angle) spanning z in [-1, 0], so the
+      // bright head sits on the bullet and the tail fades out behind it. Colour glow + white-hot core.
+      const streakTex = tex(32, 128, (g, w, h) => {
+        for (let y = 0; y < h; y++) { const v = 1 - y / h, a = Math.pow(v, 1.6); const gr = g.createLinearGradient(0, 0, w, 0); gr.addColorStop(0, 'rgba(255,255,255,0)'); gr.addColorStop(0.5, 'rgba(255,255,255,' + a.toFixed(3) + ')'); gr.addColorStop(1, 'rgba(255,255,255,0)'); g.fillStyle = gr; g.fillRect(0, y, w, 1); }
+      });
+      const crossGeo = (() => {
+        const a = new T.PlaneGeometry(1, 1).rotateX(Math.PI / 2).translate(0, 0, -0.5), b = new T.PlaneGeometry(1, 1).rotateX(Math.PI / 2).rotateZ(Math.PI / 2).translate(0, 0, -0.5);
+        const g = new T.BufferGeometry(), pa = a.attributes.position.array, pb = b.attributes.position.array, ua = a.attributes.uv.array, ub = b.attributes.uv.array;
+        g.setAttribute('position', new T.BufferAttribute(Float32Array.from([...pa, ...pb]), 3));
+        g.setAttribute('uv', new T.BufferAttribute(Float32Array.from([...ua, ...ub]), 2));
+        g.setIndex([...a.index.array, ...Array.from(b.index.array, i => i + 4)]); return g;
+      })();
+      const streakMat = c => new T.MeshBasicMaterial({ map: streakTex, color: c, transparent: true, depthWrite: false, blending: T.AdditiveBlending, side: T.DoubleSide });
+      const eShots = inst(crossGeo, streakMat('#ff3030'), 300, false, false), eCore = inst(crossGeo, streakMat('#ffd0c0'), 300, false, false);
+      eShots.renderOrder = eCore.renderOrder = 4;
+      const gunBox = inst(new T.BoxGeometry(1, 1, 1), std('#2b2d33', { metalness: 0.5, roughness: 0.45 }), MAX_SG, false, true);
       const tubeGeo = new T.CylinderGeometry(1, 1, 1, 10); tubeGeo.rotateX(Math.PI / 2);
-      const gunTube = inst(tubeGeo, std('#4d5a2a', { metalness: 0.3, roughness: 0.5 }), MAX_S, false, true);
-      const flashes = inst(new T.IcosahedronGeometry(1, 1), additive('#ffd27a'), 24, false, false);
+      const gunTube = inst(tubeGeo, std('#4d5a2a', { metalness: 0.3, roughness: 0.5 }), MAX_SG, false, true);
       // Per weapon: [kind, width, height, length, color, emissive]
       const GUNS = [
         ['box', 1.3, 1.9, 5, '#2b2d33'], ['box', 1.2, 1.7, 12, '#4a3a28'], ['box', 1.9, 2.3, 13, '#1f2328'],
@@ -356,7 +416,8 @@
       ];
 
       // ---------- Projectiles & effects ----------
-      const tracers = inst(new T.BoxGeometry(1, 1, 1), additive('#ffffff'), MAX_B, false, false);
+      const tracers = inst(crossGeo, streakMat('#ffffff'), MAX_B, false, false), tracerCore = inst(crossGeo, streakMat('#ffffff'), MAX_B, false, false);
+      tracers.renderOrder = tracerCore.renderOrder = 4;
       const rockets = inst(tubeGeo, std('#dfe3e8', { metalness: 0.4, roughness: 0.4 }), 200, false, true);
       const shells = inst(new T.SphereGeometry(1, 10, 8), std('#2a2c30', { metalness: 0.6, roughness: 0.35 }), 60, false, true);
       const bombs = inst(new T.CapsuleGeometry(2.6, 6, 3, 8), std('#3a4030', { metalness: 0.5, roughness: 0.4 }), 60, false, true);
@@ -365,9 +426,7 @@
       const fire = inst(new T.IcosahedronGeometry(1, 2), new T.MeshBasicMaterial({ color: '#ffffff', transparent: true, opacity: 0.8, blending: T.AdditiveBlending, depthWrite: false }), MAX_FX, true, false);
       const rings = inst(new T.RingGeometry(0.82, 1, 40).rotateX(-Math.PI / 2), new T.MeshBasicMaterial({ color: '#ffffff', transparent: true, blending: T.AdditiveBlending, depthWrite: false }), 60, true, false);
       const smoke = inst(new T.IcosahedronGeometry(1, 2), new T.MeshLambertMaterial({ color: '#ffffff', transparent: true, opacity: 0.55, depthWrite: false }), MAX_FX, true, false);
-      const sparks = inst(new T.BoxGeometry(1, 1, 1), new T.MeshBasicMaterial({ color: '#ffffff' }), 500, true, false);
       const puffs = [];   // renderer-side smoke {x,y,z,vx,vy,vz,life,max,size,c}
-      const debris = [];  // hot debris {x,y,z,vx,vy,vz,life,c}
       const seenFx = new WeakSet();
       const puff = (x, y, z, size, life, c, vy) => { if (puffs.length < MAX_FX) puffs.push({ x, y, z, vx: (Math.random() - 0.5) * 14, vy: vy == null ? 18 + Math.random() * 16 : vy, vz: (Math.random() - 0.5) * 14, life, max: life, size, c: c || C_('#8e8e8e') }); };
       const BOMB_A = C_('#ff3b1a'), BOMB_B = C_('#ffd23f');
@@ -429,7 +488,7 @@
         const wall = add(g, new T.BoxGeometry(140, 62, 44), wallMat, 0, 31, 0);
         bricks.repeat.set(2, 1);
         for (let k = -6; k <= 6; k += 2) add(g, new T.BoxGeometry(9, 10, 46), wallMat, k * 10, 67, 0);
-        const towers = [];
+        const towers = [], tips = [], braziers = [];
         for (const sx of [-1, 1]) {
           const tw = add(g, new T.CylinderGeometry(22, 25, 96, 18), wallMat, sx * 74, 48, 4);
           for (let k = 0; k < 8; k++) { const a = k / 8 * TAU; add(g, new T.BoxGeometry(8, 9, 8), wallMat, sx * 74 + Math.cos(a) * 21, 100, 4 + Math.sin(a) * 21); }
@@ -437,7 +496,7 @@
           const pole = add(g, new T.CylinderGeometry(0.8, 0.8, 22, 5), darkStone, sx * 74, 154, 4);
           const flag = add(g, new T.PlaneGeometry(20, 12), std('#e23b3b', { side: T.DoubleSide, emissive: '#300' }), sx * 74 + 10, 158, 4, false);
           towers.push({ tw, flag, pole });
-          for (const y of [40, 70]) add(g, new T.BoxGeometry(5, 10, 2), std('#1d1410', { emissive: '#ff9a3c', emissiveIntensity: 0.35 }), sx * 74, y, 29);
+          for (const y of [40, 70]) { add(g, new T.BoxGeometry(5, 10, 2), std('#1d1410', { emissive: '#ffa040', emissiveIntensity: 1.4 }), sx * 74, y, 29); glowSprite(g, '#ff9a3c', 18, sx * 74, y, 31); }
         }
         // Gate with arch, door and portcullis.
         add(g, new T.BoxGeometry(40, 44, 6), darkStone, 0, 22, 21);
@@ -451,9 +510,13 @@
           const cn = add(g, new T.CylinderGeometry(3, 4, 22, 12), std('#25282c', { metalness: 0.7, roughness: 0.35 }), sx * 30, 72, 16);
           cn.rotation.x = Math.PI / 2 - 0.25;
           add(g, new T.BoxGeometry(10, 6, 12), wood, sx * 30, 67, 10);
+          const tip = new T.Object3D(); tip.position.set(sx * 30, 75, 28); g.add(tip); tips.push(tip);
+          // Fire braziers by the gate.
+          add(g, new T.CylinderGeometry(4, 2.5, 6, 8), darkStone, sx * 26, 3, 26);
+          braziers.push(glowSprite(g, '#ff8a2a', 30, sx * 26, 10, 27));
         }
         g.visible = false; root.add(g);
-        return { g, wallMat, towers, smokeT: 0 };
+        return { g, wallMat, towers, tips, braziers, smokeT: 0 };
       }
 
       // Giant: a huge brute with a club.
@@ -464,7 +527,7 @@
         add(g, new T.SphereGeometry(10, 16, 12), std('#c98a6a'), 0, 76, 3);
         add(g, new T.SphereGeometry(11, 16, 10, 0, TAU, 0, Math.PI / 2), std('#2a1216'), 0, 79, 3);
         for (const sx of [-1, 1]) { const h = add(g, new T.ConeGeometry(3, 12, 8), std('#e8e0d0'), sx * 9, 88, 3); h.rotation.z = -sx * 0.5; }
-        for (const sx of [-1, 1]) add(g, new T.SphereGeometry(2, 8, 6), new T.MeshBasicMaterial({ color: '#ffd23f' }), sx * 4, 78, 12);
+        for (const sx of [-1, 1]) { add(g, new T.SphereGeometry(2, 8, 6), new T.MeshBasicMaterial({ color: '#fff0a0' }), sx * 4, 78, 12); glowSprite(g, '#ffb020', 14, sx * 4, 78, 14); }
         const arm = new T.Group(); arm.position.set(18, 58, 0); g.add(arm);
         add(arm, new T.CapsuleGeometry(4.5, 16, 4, 8), skin, 0, -10, 0);
         const club = add(arm, new T.CylinderGeometry(4, 8, 40, 10), std('#6b4423'), 0, -18, 16); club.rotation.x = Math.PI / 2;
@@ -481,28 +544,74 @@
         const turret = new T.Group(); turret.position.set(0, 36, -6); g.add(turret);
         add(turret, new T.CylinderGeometry(26, 30, 18, 16), hull, 0, 0, 0);
         const barrel = add(turret, new T.CylinderGeometry(4, 5, 60, 12), dark, 0, 2, 38); barrel.rotation.x = Math.PI / 2;
+        add(turret, new T.CylinderGeometry(6, 6, 8, 12), dark, 0, 2, 70).rotation.x = Math.PI / 2;      // muzzle brake
         add(turret, new T.BoxGeometry(12, 8, 12), dark, 14, 12, -6);
+        const tip = new T.Object3D(); tip.position.set(0, 2, 76); turret.add(tip);
         add(g, new T.CylinderGeometry(6, 6, 0.5, 16), std('#e23b3b'), 0, 31.5, 34, false);
+        // Headlights + a red sensor strip.
+        for (const sx of [-1, 1]) { add(g, new T.BoxGeometry(8, 5, 2), std('#fff2c0', { emissive: '#ffe9a0', emissiveIntensity: 1.4 }), sx * 28, 24, 56, false); glowSprite(g, '#ffe6a0', 34, sx * 28, 24, 60); }
+        add(g, new T.BoxGeometry(40, 2, 2), std('#ff3030', { emissive: '#ff2020', emissiveIntensity: 1.2 }), 0, 30, 56, false);
         g.visible = false; root.add(g);
-        return { g, wallMat: hull, turret, towers: [], smokeT: 0 };
+        return { g, wallMat: hull, turret, tip, towers: [], smokeT: 0 };
       }
+      // Gunship: armoured hull, glowing canopy, stub wings with rotary-gun pods, two engines with hot exhausts, a
+      // spinning main and tail rotor, blinking navigation lights and a searchlight sweeping the road.
+      const softM = c => new T.MeshBasicMaterial({ map: soft, color: c, transparent: true, depthWrite: false, blending: T.AdditiveBlending });
+      function glowSprite(parent, c, size, x, y, z) { const m = new T.Mesh(new T.PlaneGeometry(1, 1), softM(c)); m.scale.setScalar(size); m.position.set(x, y, z); m.rotation.x = -0.58; m.renderOrder = 4; parent.add(m); return m; }
       function makeHeli(root) {
-        const g = new T.Group(), body = std('#3d4a3a'), dark = std('#1f2420');
-        const fus = add(g, new T.CapsuleGeometry(16, 36, 6, 14), body, 0, 0, 0); fus.rotation.x = Math.PI / 2;
-        add(g, new T.SphereGeometry(13, 14, 10), std('#9fd8ff', { emissive: '#113a55' }), 0, 4, 24).scale.set(1, 0.8, 1.1);
-        const tail = add(g, new T.BoxGeometry(6, 6, 60), body, 0, 4, -52);
-        add(g, new T.BoxGeometry(2, 20, 12), body, 0, 12, -80);
-        const rotor = new T.Group(); rotor.position.set(0, 20, 0); g.add(rotor);
-        for (let k = 0; k < 4; k++) { const b = add(rotor, new T.BoxGeometry(110, 1.2, 7), dark, 0, 0, 0, false); b.rotation.y = k * Math.PI / 2; b.position.set(0, 0, 0); }
-        const disc = add(rotor, new T.CircleGeometry(56, 32), new T.MeshBasicMaterial({ color: '#cccccc', transparent: true, opacity: 0.18, side: T.DoubleSide, depthWrite: false }), 0, 0.5, 0, false);
+        const g = new T.Group(), body = lam('#36433d'), armor = lam('#26302c'), dark = std('#121614'), metal = lam('#6d777c');
+        const glassM = std('#86e6ff', { emissive: '#2a8ab0', emissiveIntensity: 1.1 });
+        const fus = add(g, new T.CapsuleGeometry(16, 36, 6, 16), body, 0, 0, 0); fus.rotation.x = Math.PI / 2;
+        add(g, new T.BoxGeometry(26, 10, 40), armor, 0, -9, 2);                                       // belly armour
+        add(g, new T.SphereGeometry(13, 18, 12), glassM, 0, 4, 24).scale.set(1, 0.8, 1.15);            // canopy
+        add(g, new T.BoxGeometry(2, 9, 16), armor, 0, 11, 22);                                         // canopy frame
+        const tail = add(g, new T.BoxGeometry(7, 7, 64), body, 0, 5, -54);
+        add(g, new T.BoxGeometry(2.4, 24, 14), body, 0, 14, -84);
+        add(g, new T.BoxGeometry(30, 2, 8), body, 0, 6, -78);                                          // tail plane
+        const tailRotor = new T.Group(); tailRotor.position.set(3.5, 16, -86); g.add(tailRotor);
+        for (let k = 0; k < 3; k++) { const b = add(tailRotor, new T.BoxGeometry(1, 26, 3), dark, 0, 0, 0, false); b.rotation.x = k * Math.PI / 1.5; }
+        // Engines on the roof with glowing exhausts.
+        const exhaust = [];
+        for (const sx of [-1, 1]) {
+          const e = add(g, new T.CylinderGeometry(5, 5.5, 26, 12), metal, sx * 10, 15, -6); e.rotation.x = Math.PI / 2;
+          add(g, new T.TorusGeometry(5, 1.2, 6, 14), dark, sx * 10, 15, 7);
+          exhaust.push(glowSprite(g, '#ff7a2a', 20, sx * 10, 15, -21));
+        }
+        // Main rotor.
+        const rotor = new T.Group(); rotor.position.set(0, 24, 0); g.add(rotor);
+        add(rotor, new T.CylinderGeometry(4, 4, 6, 10), dark, 0, -2, 0);
+        for (let k = 0; k < 4; k++) { const b = add(rotor, new T.BoxGeometry(132, 1.4, 8), dark, 0, 0, 0, false); b.rotation.y = k * Math.PI / 2; }
+        const disc = add(rotor, new T.CircleGeometry(66, 32), new T.MeshBasicMaterial({ color: '#9aa6c8', transparent: true, opacity: 0.13, side: T.DoubleSide, depthWrite: false }), 0, 0.5, 0, false);
         disc.rotation.x = -Math.PI / 2;
-        for (const sx of [-1, 1]) { add(g, new T.BoxGeometry(3, 3, 44), dark, sx * 16, -20, 0); add(g, new T.CylinderGeometry(3, 3, 18, 8), dark, sx * 22, -6, 14).rotation.x = Math.PI / 2; }
+        // Stub wings, rotary gun pods (their muzzles are where the burst flashes), rocket racks.
+        const guns = [], barrels = [];
+        for (const sx of [-1, 1]) {
+          add(g, new T.BoxGeometry(30, 3, 14), armor, sx * 26, -4, 4);
+          const pod = new T.Group(); pod.position.set(sx * 38, -9, 8); g.add(pod);
+          const housing = add(pod, new T.CylinderGeometry(4.5, 4.5, 14, 12), dark, 0, 0, -2); housing.rotation.x = Math.PI / 2;
+          const bar = new T.Group(); bar.position.z = 8; pod.add(bar); barrels.push(bar);
+          for (let k = 0; k < 6; k++) { const a = k / 6 * TAU, c = add(bar, new T.CylinderGeometry(0.8, 0.8, 14, 6), metal, Math.cos(a) * 2.2, Math.sin(a) * 2.2, 4, false); c.rotation.x = Math.PI / 2; }
+          const tip = new T.Object3D(); tip.position.z = 12; bar.add(tip); guns.push(tip);
+          const rack = add(g, new T.CylinderGeometry(3.4, 3.4, 16, 8), armor, sx * 22, -10, 6); rack.rotation.x = Math.PI / 2;
+          add(g, new T.CircleGeometry(3, 8), std('#ff5a3a', { emissive: '#ff3a1a', emissiveIntensity: 0.8 }), sx * 22, -10, 14.1, false);
+          add(g, new T.BoxGeometry(3, 3, 48), dark, sx * 15, -22, 0);                                   // skids
+          for (const z of [-12, 12]) add(g, new T.BoxGeometry(2, 10, 2), dark, sx * 13, -17, z);
+        }
+        // Navigation lights (blink in render) and the searchlight.
+        // A violet storm glow behind the gunship (one big additive quad) sets it against the night sky.
+        const aura = glowSprite(g, '#7a2aff', 160, 0, 30, -40); aura.material.opacity = 0.55;
+        const nav = [glowSprite(g, '#ff2a2a', 16, -54, -4, 4), glowSprite(g, '#2aff6a', 16, 54, -4, 4), glowSprite(g, '#ffffff', 14, 0, 16, -90)];
+        const beamMat = new T.MeshBasicMaterial({ map: glow, color: '#bfe4ff', transparent: true, depthWrite: false, blending: T.AdditiveBlending, opacity: 0.22 });
+        const beam = new T.Mesh(new T.CylinderGeometry(3, 34, 150, 18, 1, true).translate(0, -75, 0), beamMat);
+        beam.position.set(0, -8, 30); beam.rotation.x = -0.55; beam.renderOrder = 4; g.add(beam);
+        const spot = new T.Mesh(new T.PlaneGeometry(1, 1).rotateX(-Math.PI / 2), softM('#9fd0ff')); spot.scale.set(110, 1, 80); spot.renderOrder = 4; spot.visible = false; root.add(spot);
         g.visible = false; root.add(g); g.userData.tail = tail;
-        return { g, wallMat: body, rotor, towers: [], smokeT: 0 };
+        return { g, wallMat: body, rotor, tailRotor, guns, barrels, nav, exhaust, beam, spot, aura, spin: 0, towers: [], smokeT: 0 };
       }
 
       // ---------- Gates & crates ----------
       const glow = glowTex(); glow.shared = true;
+      const frameGlow = frameGlowTex(); frameGlow.shared = true;
       const crateTexs = { weapon: crateTex('weapon'), troops: crateTex('troops'), mortar: crateTex('mortar'), air: crateTex('air') };
       Object.values(crateTexs).forEach(t => { t.shared = true; });
       // Energy field: bright at the bottom and the frame edges, rising scan bands and a fine hex shimmer.
@@ -527,9 +636,12 @@
           add(grp, new T.BoxGeometry(8.4, 3, 8.4), beamMat, sx * hw, H * 0.5, 0, false);
           add(grp, new T.OctahedronGeometry(5.2, 0), beamMat, sx * hw, H + 9, 0);
         }
-        const strip = new T.Mesh(new T.PlaneGeometry(g.w + 16, 18).rotateX(-Math.PI / 2), new T.MeshBasicMaterial({ map: glow, color: '#3be07a', transparent: true, blending: T.AdditiveBlending, depthWrite: false }));
+        const strip = new T.Mesh(new T.PlaneGeometry(g.w + 30, 34).rotateX(-Math.PI / 2), new T.MeshBasicMaterial({ map: glow, color: '#3be07a', transparent: true, blending: T.AdditiveBlending, depthWrite: false }));
         strip.position.y = 0.6; grp.add(strip);
-        return { g: grp, panel, beamMat, strip };
+        // Neon: a soft glowing outline around the whole frame (a pre-baked glow texture, no bloom pass).
+        const halo = new T.Mesh(new T.PlaneGeometry(g.w + 56, H + 40), new T.MeshBasicMaterial({ map: frameGlow, color: '#3be07a', transparent: true, blending: T.AdditiveBlending, depthWrite: false }));
+        halo.position.set(0, H / 2 + 6, -1); halo.renderOrder = 4; grp.add(halo);
+        return { g: grp, panel, beamMat, strip, halo };
       }
       function makeCrate(c) {
         const grp = new T.Group(), mat = std('#ffffff', { map: crateTexs[c.what] || crateTexs.weapon, roughness: 0.8 });
@@ -580,25 +692,25 @@
       }
 
       const R = {
-        _scene: scene, // test hook
+        _scene: scene, _renderer: renderer, // test hooks
         portrait,
         is3D: true,
         setLevel(S) {
           disposeLevel();
           const root = new T.Group(), th = S.theme;
-          const land = new T.Color(th.land || '#7cc464').lerp(new T.Color('#3f9a45'), 0.4);
+          const land = new T.Color(th.land || '#7cc464').lerp(new T.Color('#3f9a45'), 0.4).lerp(new T.Color('#1a2850'), 0.42);
           if (grassMat.map) grassMat.map.dispose();
           grassMat.map = grassTex('#' + land.getHexString()); grassMat.map.repeat.set(26, 26); grassMat.color.set('#ffffff'); grassMat.needsUpdate = true;
-          hillMat.color.copy(land).lerp(new T.Color('#9cc7e8'), 0.35);
-          waterMat.color.set(th.sea || '#3aa0e8');
-          scene.fog.color.set('#d9eeff');
+          hillMat.color.copy(land).lerp(new T.Color('#2a2060'), 0.45);
+          waterMat.color.set(th.sea || '#3aa0e8').lerp(new T.Color('#0e1440'), 0.62); waterMat.emissive.set('#140c3a');
+          scene.fog.color.set('#2a1a52');
           const castle = makeCastle(root);
           const bosses = { kale: castle, dev: makeDev(root), tank: makeTank(root), heli: makeHeli(root) };
           scene.add(root);
-          puffs.length = 0; debris.length = 0;
+          puffs.length = 0; prevBullets = []; fx.clear();
           level = { root, castle, bosses, gates: new Map(), crates: new Map(), S };
           R.fit();
-          if (!warmed) { warmed = true; warmUp(); }
+          if (!warmed) { warmed = true; warmUp(); fx.warm(0, 20, 200); }
         },
 
         fit() {
@@ -644,6 +756,9 @@
           if (perf.acc > 2.5) {
             const avg = perf.acc / perf.n;
             if (avg > 1 / 45 && pixelRatio > 1) { pixelRatio = Math.max(1, pixelRatio - 0.25); renderer.setPixelRatio(pixelRatio); R.fit(); }
+            // Still slow at the lowest resolution: drop the purely decorative extras (filler marchers, lamp light pools,
+            // half the effect particles). Gameplay visuals (soldiers, bullets, hits, gates) stay.
+            else if (avg > 1 / 40 && pixelRatio <= 1 && !lowFx) { lowFx = true; lampPool.visible = false; fx.setBudget(200); }
             perf.acc = 0; perf.n = 0;
           }
           const D = S.dist, DR = S.rdist;
@@ -688,10 +803,13 @@
               put(flags, nfl++, d.x, 41, z, 22, 13, 1, 0, Math.PI / 2 + (d.side ? 0.15 : -0.15) + Math.sin(time * 3 + d.s) * 0.25, 0, FLAG_C[d.side]);
             } else {
               put(poles, npo, d.x, 22, z, 1, 1, 1);
-              put(lampHeads, npo++, d.x - Math.sign(d.x) * 5, 44, z, 1, 1, 1);
+              const lx = d.x - Math.sign(d.x) * 5, fl = 1 + 0.06 * Math.sin(time * 9 + d.s);
+              put(lampGlow, npo, lx, 42, z + 2, 46 * fl, 46 * fl, 1, -0.58, 0, 0);
+              put(lampPool, npo, lx - Math.sign(d.x) * 8, 1.4, z, 62, 1, 48);
+              put(lampHeads, npo++, lx, 44, z, 1, 1, 1);
             }
           }
-          done(trunks, nt); done(crowns, ncw); done(rocks, nro); done(poles, npo); done(lampHeads, npo); done(pines, npi); done(bushes, nbu); done(flags, nfl); done(flagPoles, nfl);
+          done(trunks, nt); done(crowns, ncw); done(rocks, nro); done(poles, npo); done(lampHeads, npo); done(lampGlow, npo); done(lampPool, npo); done(pines, npi); done(bushes, nbu); done(flags, nfl); done(flagPoles, nfl);
 
           // Gates.
           const seen = new Set();
@@ -701,9 +819,10 @@
             if (!m) { m = makeGate(g); L.gates.set(g.id, m); L.root.add(m.g); }
             const c = g.mul ? '#ffd23f' : g.val >= 1 ? '#3be07a' : '#ff4757';
             m.panel.material.uniforms.uC.value.set(c); m.panel.material.uniforms.uT.value = time; m.panel.material.uniforms.uF.value = g.flash;
-            m.beamMat.color.set(c); m.beamMat.emissive.set(c); m.beamMat.emissiveIntensity = 0.55 + 0.25 * Math.sin(time * 5) + g.flash;
+            m.beamMat.color.set(c); m.beamMat.emissive.set(c); m.beamMat.emissiveIntensity = 1.1 + 0.35 * Math.sin(time * 5) + g.flash;
             for (const o of m.g.children) if (o.geometry && o.geometry.type === 'OctahedronGeometry') o.rotation.y = time * 2;
-            m.strip.material.color.set(c).multiplyScalar(0.55);
+            m.strip.material.color.set(c).multiplyScalar(0.8);
+            m.halo.material.color.set(c).multiplyScalar(0.75 + 0.2 * Math.sin(time * 5 + g.id) + g.flash);
             m.g.position.set(g.x - CX, 0, g.y - CZ);
           }
           for (const [id, m] of L.gates) if (!seen.has(id)) { L.root.remove(m.g); m.g.traverse(o => { if (o.geometry) o.geometry.dispose(); }); L.gates.delete(id); /* gate material not disposed: shader stays compiled */ }
@@ -723,6 +842,7 @@
 
           // Boss (fortress, giant, tank or helicopter).
           for (const k in L.bosses) L.bosses[k].g.visible = !!(C && !C.dead && C.type === k);
+          if (!C || C.dead) L.bosses.heli.spot.visible = false;
           const K = C ? L.bosses[C.type] || L.castle : L.castle;
           if (C && !C.dead) {
             K.g.position.set(C.x - CX, 0, C.y - CZ);
@@ -735,10 +855,39 @@
               K.g.scale.setScalar(1); blob(C.x - CX, C.y - CZ, 120, 140);
               K.turret.rotation.y = Math.atan2(S.squad.x - C.x, SQUAD_Y - C.y) * 0.9;
             } else {
-              K.g.scale.setScalar(1); K.g.position.y = 110 + Math.sin(time * 2) * 5;
-              K.g.rotation.z = Math.max(-0.3, Math.min(0.3, (S.squad.x - C.x) * -0.004));
-              K.rotor.rotation.y += dt * 30;
-              blob(C.x - CX, C.y - CZ, 100, 90);
+              K.g.scale.setScalar(1.4); K.g.position.y = 120 + Math.sin(time * 2) * 5;
+              K.g.rotation.z = Math.max(-0.3, Math.min(0.3, (S.squad.x - C.x) * -0.004)); K.g.rotation.x = 0.08 + Math.sin(time * 1.3) * 0.03;
+              K.rotor.rotation.y += dt * 30; K.tailRotor.rotation.x += dt * 40;
+              K.spin = Math.max(0, K.spin - dt * 2); K.barrels.forEach(b => { b.rotation.z += dt * (4 + K.spin * 40); });
+              K.nav[0].visible = K.nav[1].visible = Math.sin(time * 6) > -0.3; K.nav[2].visible = (time * 1.4) % 1 < 0.12;
+              K.exhaust.forEach((e, i) => e.scale.setScalar(18 + 3 * Math.sin(time * 30 + i)));
+              K.aura.material.opacity = 0.45 + 0.12 * Math.sin(time * 2.3) + K.spin * 0.25;
+              // Searchlight sweeps the road ahead of the squad; its pool of light lands on the asphalt.
+              const sw = Math.sin(time * 0.9) * 0.35; K.beam.rotation.set(-0.55, 0, sw); K.beam.material.opacity = 0.16 + 0.04 * Math.sin(time * 7);
+              K.spot.visible = true; K.spot.position.set(C.x - CX - sw * 190, 1.6, C.y - CZ + 150);
+              blob(C.x - CX, C.y - CZ, 140, 120);
+              // Storm around the gunship: every so often a violet/green bolt forks through the sky beside it.
+              if ((skyBoltT -= dt) <= 0 && C.arrived) {
+                skyBoltT = rnd(1.4, 2.8);
+                const hx = C.x - CX, hy = K.g.position.y + 30, hz = C.y - CZ, sd = Math.random() < 0.5 ? -1 : 1;
+                fx.bolt(hx + sd * 40, hy + rnd(20, 60), hz - 20, hx + sd * rnd(150, 260), hy + rnd(-20, 70), hz + rnd(-80, 40), { w: 1.6, life: 0.32, branches: 2, sparks: 0, colA: Math.random() < 0.5 ? '#b04dff' : '#7dff4a', colB: '#e6c8ff' });
+              }
+            }
+            if (C.type !== 'heli') L.bosses.heli.spot.visible = false;
+            if (C.type === 'kale') K.braziers.forEach((b, i) => { b.scale.setScalar(28 + 5 * Math.sin(time * 13 + i * 2)); if (Math.random() < dt * 8) fx.mote(C.x - CX + (i ? 26 : -26) * C.w / 150, 14, C.y - CZ + 28, i ? '#ffb040' : '#ff7a2a', 1, 1.2, 9); });
+            // Boss fire: a new cannon shell / bomb gets a muzzle flash at the gun and, for the gunship and the castle,
+            // a short crackle of lightning (the boss "charging" its attack).
+            for (const sh of S.shells) if (sh.foe && !seenFx.has(sh)) {
+              seenFx.add(sh);
+              let mx = sh.x0 - CX, my = 40, mz = sh.y0 - CZ;
+              const gun = C.type === 'tank' ? K.tip : C.type === 'kale' ? K.tips[sh.x0 < C.x ? 0 : 1] : C.type === 'heli' ? K.guns[sh.x0 < C.x ? 0 : 1] : null;
+              if (gun) { const gp = gun.getWorldPosition(v3); mx = gp.x; my = gp.y; mz = gp.z; }
+              fx.muzzle(mx, my, mz, (sh.x1 - sh.x0) * 0.2, sh.y1 - sh.y0, '#ff9a3a', 2.2); fx.shower(mx, my, mz, 0, 1, '#ffb040', 8);
+              for (let k = 0; k < 4; k++) puff(mx, my, mz + 6, 6, 0.9, SMOKE_M, 10);
+              if (C.type === 'heli' || C.type === 'kale') for (let k = 0; k < 2; k++) {
+                const a = rnd(-1.2, 1.2); fx.bolt(mx, my, mz, mx + Math.sin(a) * rnd(60, 120), my + rnd(-10, 40), mz + Math.cos(a) * rnd(30, 70), { w: 1.1, life: 0.22, branches: 1, colA: '#b04dff', colB: '#7dff4a' });
+              }
+              if (C.type === 'heli') K.spin = 1;
             }
             K.wallMat.emissive.setRGB(C.flash * 0.35, C.flash * 0.15, C.flash * 0.1);
             K.towers.forEach((tw, k) => { tw.flag.rotation.y = Math.sin(time * 3 + k) * 0.35; });
@@ -757,52 +906,52 @@
           const isTube = gun[0] === 'tube', gm = isTube ? gunTube : gunBox;
           gunBox.material.color.set(gun[4]); gunTube.material.color.set(gun[4]);
           gunTube.material.emissive = gunTube.material.emissive || new T.Color(); gunTube.material.emissive.set(gun[5] || '#000000');
-          let n = 0, nf = 0, ng = 0, nh = 0, nct = 0;
+          let n = 0, nl = 0, ng = 0, nh = 0, nct = 0;
           const flashOn = S.fireFlash > 0 && info.playing;
           const gk = GEAR[info.gear] || GEAR.mavi, beretC = C_(gk.beret || '#ffffff'), plumeC = C_(gk.plume || '#ffffff'), capeC = C_(gk.cape || '#ffffff');
           for (const m of [squad.torso, squad.armL, squad.armR, squad.helmet]) { if (m.material.emissive) m.material.emissive.setScalar(gk.glow ? gk.glow * (0.7 + 0.3 * Math.sin(time * 3)) : 0); }
-          for (let i = 0; i < form.length && n < MAX_S; i++) {
-            const x = q.x + form[i].x - CX, z = SQUAD_Y + form[i].y - CZ, ph = time * 14 + i * 1.7, sw = info.playing ? Math.sin(ph) * 0.7 : 0;
+          // The squad's own soldiers (full detail), then the filler marchers (lite parts) that make the crowd look dense.
+          const nDet = Math.min(form.length, MAX_S), fill = lowFx ? [] : fillersFor(q.n, form), total = nDet + fill.length;
+          for (let i = 0; i < total; i++) {
+            const det = i < nDet, p = det ? form[i] : fill[i - nDet], B = det ? squad : lite, k = det ? n : nl;
+            const x = q.x + p.x - CX, z = SQUAD_Y + p.y - CZ, ph = time * 14 + i * 1.7, sw = info.playing ? Math.sin(ph) * 0.7 : 0;
             const bob = info.playing ? Math.abs(Math.sin(ph)) * 0.9 : 0;
-            blob(x, z + 1, 11 * s * 0.9, 9 * s * 0.9);
-            put(squad.legL, n, x - 1.7 * s, 6.6 * s, z, s, s, s, sw, 0, 0);
-            put(squad.legR, n, x + 1.7 * s, 6.6 * s, z, s, s, s, -sw, 0, 0);
-            put(squad.torso, n, x, (9.6 + bob) * s, z, s, s, s, 0.12 * dir, 0, 0, bodyC);
-            put(squad.belt, n, x, (7.6 + bob) * s, z + 0.25 * s, s, s, s, 0.12 * dir, 0, 0);
+            if (det) blob(x, z + 1, 11 * s * 0.9, 9 * s * 0.9);
+            put(B.legL, k, x - 1.7 * s, 6.6 * s, z, s, s, s, sw, 0, 0);
+            put(B.legR, k, x + 1.7 * s, 6.6 * s, z, s, s, s, -sw, 0, 0);
+            put(B.torso, k, x, (9.6 + bob) * s, z, s, s, s, 0.12 * dir, 0, 0, bodyC);
             // Both arms forward on the weapon, a little recoil kick when firing.
             const kick = flashOn ? 0.15 : 0;
-            put(squad.armL, n, x - 3.3 * s, (12.4 + bob) * s, z, s, s, s, -1.25 - kick, 0, -0.35, bodyC);
-            put(squad.armR, n, x + 3.3 * s, (12.4 + bob) * s, z, s, s, s, -1.35 - kick, 0, 0.2, bodyC);
-            put(squad.head, n, x, (15.8 + bob) * s, z, s, s, s);
-            put(squad.eyes, n, x, (15.9 + bob) * s, z - 2.45 * s, s, s, s);
-            if (gk.hat !== 'beret' && gk.hat !== 'crown') put(squad.helmet, n, x, (16.4 + bob) * s, z, s, 0.85 * s, s, 0, 0, 0, helmC); else put(squad.helmet, n, x, -50, z, 0.01, 0.01, 0.01);
+            put(B.armL, k, x - 3.3 * s, (12.4 + bob) * s, z, s, s, s, -1.25 - kick, 0, -0.35, bodyC);
+            put(B.armR, k, x + 3.3 * s, (12.4 + bob) * s, z, s, s, s, -1.35 - kick, 0, 0.2, bodyC);
+            put(B.head, k, x, (15.8 + bob) * s, z, s, s, s);
+            if (det) {
+              put(squad.belt, n, x, (7.6 + bob) * s, z + 0.25 * s, s, s, s, 0.12 * dir, 0, 0);
+              put(squad.eyes, n, x, (15.9 + bob) * s, z - 2.45 * s, s, s, s);
+              put(squad.pack, n, x, (10.4 + bob) * s, z - dir * 3.3 * s, s, s, s);
+            }
+            if (gk.hat !== 'beret' && gk.hat !== 'crown') put(B.helmet, k, x, (16.4 + bob) * s, z, s, 0.85 * s, s, 0, 0, 0, helmC); else put(B.helmet, k, x, -50, z, 0.01, 0.01, 0.01);
             const hy = (16.4 + bob) * s;
             if (gk.hat === 'beret') put(gear.beret, ng, x, hy + 1 * s, z, s, s, s, 0, 0, 0.22, beretC);
             else if (gk.hat === 'plume') put(gear.plume, ng, x, hy + 3.4 * s, z + 1 * s, s, s, s, 0.5, 0, 0, plumeC);
             else if (gk.hat === 'spike') put(gear.spike, ng, x, hy + 3.4 * s, z, s, s, s);
             else if (gk.hat === 'horns') { put(gear.horn, nh++, x - 2.4 * s, hy + 1 * s, z, s, s, s, 0, 0, 0.7); put(gear.horn, nh++, x + 2.4 * s, hy + 1 * s, z, s, s, s, 0, 0, -0.7); }
-            else if (gk.hat === 'crown') { put(gear.crown, ng, x, hy + 0.2 * s, z, s, s, s, 0, time * 0.5, 0); for (let k = 0; k < 5; k++) { const a = time * 0.5 + k / 5 * TAU; put(gear.crownTip, nct++, x + Math.sin(a) * 2.9 * s, hy + 1.9 * s, z + Math.cos(a) * 2.9 * s, s, s, s); } }
+            else if (gk.hat === 'crown') { put(gear.crown, ng, x, hy + 0.2 * s, z, s, s, s, 0, time * 0.5, 0); for (let k2 = 0; k2 < 5; k2++) { const a = time * 0.5 + k2 / 5 * TAU; put(gear.crownTip, nct++, x + Math.sin(a) * 2.9 * s, hy + 1.9 * s, z + Math.cos(a) * 2.9 * s, s, s, s); } }
             if (gk.cape) put(gear.cape, ng, x, (14.2 + bob) * s, z + 4.8 * s, s, s, s, 0.25 + (info.playing ? 0.12 + Math.sin(ph) * 0.1 : 0), 0, 0, capeC);
-            ng++;
-            put(squad.pack, n, x, (10.4 + bob) * s, z - dir * 3.3 * s, s, s, s);
-            if (isTube) put(gm, n, x + 2.8 * s, (14.2 + bob) * s, z + dir * 1.5 * s, gun[1] * s, gun[2] * s, gun[3] * s);
-            else put(gm, n, x + 2.6 * s, (10.8 + bob) * s, z + dir * (gun[3] / 2 + 1.5) * s, gun[1] * s, gun[2] * s, gun[3] * s);
-            if (flashOn && i < 12 && nf < 24) {
-              const fz = z + dir * (isTube ? gun[3] / 2 + 3 : gun[3] + 2.5) * s, fy = (isTube ? 14.2 : 10.8) * s;
-              const fs = (1.6 + Math.random() * 1.6) * (isTube ? 1.8 : 1);
-              put(flashes, nf++, x + 2.7 * s, fy, fz, fs, fs, fs * 1.8);
-            }
-            n++;
+            if (isTube) put(gm, ng, x + 2.8 * s, (14.2 + bob) * s, z + dir * 1.5 * s, gun[1] * s, gun[2] * s, gun[3] * s);
+            else put(gm, ng, x + 2.6 * s, (10.8 + bob) * s, z + dir * (gun[3] / 2 + 1.5) * s, gun[1] * s, gun[2] * s, gun[3] * s);
+            ng++; if (det) n++; else nl++;
           }
           for (const m of [squad.legL, squad.legR, squad.armL, squad.armR, squad.torso, squad.belt, squad.head, squad.eyes, squad.helmet, squad.pack]) done(m, n);
+          for (const k in lite) done(lite[k], nl);
           done(gear.beret, gk.hat === 'beret' ? ng : 0); done(gear.plume, gk.hat === 'plume' ? ng : 0); done(gear.spike, gk.hat === 'spike' ? ng : 0);
           done(gear.crown, gk.hat === 'crown' ? ng : 0); done(gear.horn, nh); done(gear.crownTip, nct); done(gear.cape, gk.cape ? ng : 0);
           // Skin trail: a few particles rising off the marching squad.
-          if (gk.fx && info.playing && form.length) for (let k = 0; k < 2; k++) if (Math.random() < dt * 30 && gearTrail.length < 140) {
-            const f0 = form[(Math.random() * Math.min(form.length, MAX_S)) | 0], col0 = C_(gk.fxc[(Math.random() * gk.fxc.length) | 0]);
-            gearTrail.push({ x: q.x + f0.x - CX + (Math.random() - 0.5) * 6, y: gk.fx === 'ice' ? 30 : 4 + Math.random() * 20, z: SQUAD_Y + f0.y - CZ + 4, vx: (Math.random() - 0.5) * 8, vy: gk.fx === 'ice' ? -14 : gk.fx === 'fire' ? 26 : 12, vz: gk.fx === 'fire' ? 30 : 8, life: 0.7 + Math.random() * 0.5, c: col0 });
+          if (gk.fx && info.playing && form.length) for (let k = 0; k < 2; k++) if (Math.random() < dt * 30) {
+            const f0 = form[(Math.random() * Math.min(form.length, MAX_S)) | 0], col0 = gk.fxc[(Math.random() * gk.fxc.length) | 0];
+            fx.emit(q.x + f0.x - CX + (Math.random() - 0.5) * 6, gk.fx === 'ice' ? 30 : 4 + Math.random() * 20, SQUAD_Y + f0.y - CZ + 4, (Math.random() - 0.5) * 8, gk.fx === 'ice' ? -14 : gk.fx === 'fire' ? 26 : 12, gk.fx === 'fire' ? 30 : 8, 0.7 + Math.random() * 0.5, 2.4, 0.6, col0, 0.9, 0, 0, 0, gk.fx === 'sparkle' ? 1 : 0);
           }
-          done(gm, n); done(isTube ? gunBox : gunTube, 0); done(flashes, nf);
+          done(gm, ng); done(isTube ? gunBox : gunTube, 0);
           muzzleLight.intensity = flashOn ? 3.5 : 0;
           muzzleLight.position.set(q.x - CX, 24, SQUAD_Y - CZ - 18);
           // Enemy flood.
@@ -840,30 +989,45 @@
             put(mineLight, nmi++, m.x - CX, 5, m.y - CZ, k, k, k);
           }
           done(mineBody, nmi); done(mineLight, nmi);
-          let neb = 0;
+          let neb = 0, nEm = 0;
+          const heliGuns = C && C.type === 'heli' && !C.dead ? L.bosses.heli.guns : null;
           for (const b of S.ebullets) {
             if (neb >= 300) break;
-            put(eShots, neb++, b.x - CX, 12, b.y - CZ, 2.2, 2.2, 12, 0, Math.atan2(b.vx, b.vy), 0);
+            const a = Math.atan2(b.vx, b.vy);
+            put(eShots, neb, b.x - CX, 12, b.y - CZ, 8, 8, 34, 0, a, 0); put(eCore, neb++, b.x - CX, 12, b.y - CZ, 2.4, 2.4, 26, 0, a, 0);
+            // A new enemy burst: muzzle flash at the gun (the helicopter's pods, or the shooter on the road).
+            if (!seenB.has(b)) {
+              seenB.add(b);
+              if (nEm++ < 6) {
+                if (heliGuns) { L.bosses.heli.spin = 1; const gp = heliGuns[nEm % 2].getWorldPosition(v3); fx.muzzle(gp.x, gp.y, gp.z, b.vx, b.vy, '#ff8a3a', 1.1); fx.shower(gp.x, gp.y, gp.z, 0, 1, '#ffb040', 3); }
+                else fx.muzzle(b.x - CX, 14, b.y - CZ, b.vx, b.vy, '#ff6a3a', 0.6);
+              }
+            }
           }
-          done(eShots, neb);
+          done(eShots, neb); done(eCore, neb);
 
           // Projectiles.
           const wc = info.weapon.color;
-          tracers.material.color.set(wc);
-          let nb = 0, nr2 = 0, nfire = 0;
+          tracers.material.color.set(wc); tracerCore.material.color.set(wc).lerp(WHITE, 0.75);
+          let nb = 0, nr2 = 0, nfire = 0, nMz = 0, nImp = 0;
+          // Bullets that died since the last frame hit something (the off-screen ones end beyond y -60): sparks there.
+          for (const b of prevBullets) if (b.dead && b.y > -55 && b.kind !== 'rocket' && nImp++ < 10) fx.impact(b.x - CX, 14, b.y - CZ, wc, b.kind === 'laser' ? 0.45 : 0.55, Math.random() < 0.3 ? 1 : 0, '#4a4256');
+          prevBullets = S.bullets;
           for (const b of S.bullets) {
             const x = b.x - CX, z = b.y - CZ, y = 15.5;
+            // A new bullet: muzzle flash where that soldier stands (the volley comes from the whole squad).
+            if (!seenB.has(b)) { seenB.add(b); if (nMz++ < 14) fx.muzzle(x, y, z, b.vx, -b.speed, wc, b.kind === 'rocket' ? 1.2 : b.kind === 'pellet' ? 0.85 : 0.75); }
             if (b.kind === 'rocket') {
               if (nr2 < 200) put(rockets, nr2++, x, y, z, 1.7, 1.7, 9);
               if (nfire < MAX_FX) put(fire, nfire++, x, y, z + 6.5, 2.2, 2.2, 4 + Math.random() * 3, 0, 0, 0, FIRE_B);
+              fx.trail(x, y, z + 7, '#ff8a3a', 1.6, 0.28);
               if (Math.random() < 0.25) puff(x, y, z + 8, 2.6, 0.6, SMOKE_L, 6);
             } else if (nb < MAX_B) {
-              if (b.kind === 'laser') put(tracers, nb++, x, y, z, 1.4, 1.4, 42);
-              else if (b.kind === 'pellet') put(tracers, nb++, x, y, z, 1.5, 1.5, 7);
-              else put(tracers, nb++, x, y, z, 1.3, 1.3, 13);
+              const a = Math.atan2(b.vx, -b.speed), L = b.kind === 'laser' ? 80 : b.kind === 'pellet' ? 24 : 36, w = b.kind === 'laser' ? 6 : 8;
+              put(tracers, nb, x, y, z, w, w, L, 0, a, 0); put(tracerCore, nb++, x, y, z, w * 0.3, w * 0.3, L * 0.8, 0, a, 0);
             }
           }
-          done(tracers, nb); done(rockets, nr2);
+          done(tracers, nb); done(tracerCore, nb); done(rockets, nr2);
           // Mortar shells with smoke trail + landing markers.
           let nsh = 0, nmk = 0;
           for (const sh of S.shells) {
@@ -900,7 +1064,7 @@
             blob(mt.x - CX, mt.y - CZ, 30, 30);
             m.tube.position.z = mt.recoil * 3; m.tube.position.y = 2 - mt.recoil * 1.2;
             m.crew.userData.body.material.color.set(info.skin);
-            if (mt.recoil > 0.97) { puff(mt.x - CX, 28, mt.y - CZ - 18, 5, 0.9, SMOKE_M, 12); if (nfire < MAX_FX) put(fire, nfire++, mt.x - CX, 28, mt.y - CZ - 18, 6, 6, 6, 0, 0, 0, FIRE_A); }
+            if (mt.recoil > 0.97) { puff(mt.x - CX, 28, mt.y - CZ - 18, 5, 0.9, SMOKE_M, 12); if (nfire < MAX_FX) put(fire, nfire++, mt.x - CX, 28, mt.y - CZ - 18, 6, 6, 6, 0, 0, 0, FIRE_A); if (!m.fired) fx.muzzle(mt.x - CX, 30, mt.y - CZ - 18, 0, -1, '#ffb040', 1.6); m.fired = true; } else m.fired = false;
           });
 
           // Light flashes of the explosions (pooled additive sprites).
@@ -914,10 +1078,8 @@
               seenFx.add(f); boomFlash(x, 14, z, f.big ? f.r * 3.2 : f.r * 2.2, f.big ? 0.45 : 0.3);
               const n2 = f.big ? 10 : 5;
               for (let k = 0; k < n2; k++) puff(x + (Math.random() - 0.5) * f.r * 0.8, 6 + Math.random() * 10, z + (Math.random() - 0.5) * f.r * 0.8, f.r * (0.28 + Math.random() * 0.2), 1.6 + Math.random(), C_(k % 2 ? '#5e5650' : '#7d746c'), 16 + Math.random() * 20);
-              for (let k = 0; k < (f.big ? 26 : 12) && debris.length < 300; k++) {
-                const a = Math.random() * TAU, v = 60 + Math.random() * 140;
-                debris.push({ x, y: 6, z, vx: Math.cos(a) * v, vy: 90 + Math.random() * 160, vz: Math.sin(a) * v, life: 0.6 + Math.random() * 0.6, c: C_(k % 3 ? '#ffb020' : '#ff5a1f') });
-              }
+              // Flash, embers, sparks, flying stone chips and a scorch mark (the game drives the shake itself).
+              fx.explosion(x, 10, z, f.r * 0.55, { n: f.big ? 22 : 12, rocks: f.big ? 10 : 5, shake: 0, rockCol: '#3c3644' });
             }
             const p = 1 - f.life, grow = 1 - Math.pow(1 - Math.min(1, p * 2.2), 3);
             const r = f.r * (0.35 + 0.75 * grow) * (1 - p * 0.25);
@@ -930,25 +1092,8 @@
           }
           done(rings, nring);
           boomLight.intensity = strongest * 6; boomLight.position.set(bx, 40, bz);
-          // Particles from the game (sparks/blood) + debris.
-          let nsp = 0;
-          for (const p0 of S.parts) {
-            if (nsp >= 500) break;
-            const k = 2.2 * Math.max(0.2, p0.life);
-            put(sparks, nsp++, p0.x - CX, 6 + (1 - p0.life) * 14, p0.y - CZ, k, k, k, p0.life * 5, p0.life * 3, 0, col.set(p0.c));
-          }
-          for (const d of debris) {
-            d.vy -= 420 * dt; d.x += d.vx * dt; d.y += d.vy * dt; d.z += d.vz * dt; d.life -= dt;
-            if (d.y < 1) { d.y = 1; d.vy *= -0.3; d.vx *= 0.6; d.vz *= 0.6; }
-            if (nsp < 500) { const k = 1.8 * Math.min(1, d.life * 2); put(sparks, nsp++, d.x, d.y, d.z, k, k, k, d.life * 9, d.life * 7, 0, d.c); }
-          }
-          for (let i = debris.length - 1; i >= 0; i--) if (debris[i].life <= 0) debris.splice(i, 1);
-          for (const d of gearTrail) {
-            d.x += d.vx * dt; d.y += d.vy * dt; d.z += d.vz * dt; d.life -= dt;
-            if (nsp < 500) { const k = 1.5 * Math.min(1, d.life * 2); put(sparks, nsp++, d.x, d.y, d.z, k, k, k, d.life * 6, d.life * 4, 0, d.c); }
-          }
-          for (let i = gearTrail.length - 1; i >= 0; i--) if (gearTrail[i].life <= 0) gearTrail.splice(i, 1);
-          done(sparks, nsp);
+          // Particles from the game (hit sparks, kills): handed to the GPU system once, when they appear.
+          for (const p0 of S.parts) if (!seenFx.has(p0)) { seenFx.add(p0); fx.emit(p0.x - CX, 8, p0.y - CZ, p0.vx * 1.3, rnd(50, 130), p0.vy * 1.3, rnd(0.35, 0.6), 2.6, 0.6, p0.c, 1, 320, 3, 0.03, 2); }
           // Smoke puffs.
           let npf = 0;
           for (const p0 of puffs) {
@@ -960,6 +1105,7 @@
           }
           for (let i = puffs.length - 1; i >= 0; i--) if (puffs[i].life <= 0) puffs.splice(i, 1);
           done(smoke, npf); done(fire, nfire); done(blobs, nBlob);
+          fx.update(dt);
 
           // The camera leans a little toward the squad's side of the road (parallax) and sways with the run.
           camX += ((S.squad.x - CX) * 0.1 - camX) * Math.min(1, dt * 3);

@@ -9,7 +9,7 @@
 <style>
   .prog { height: 8px; margin: 6px 40px 0; border-radius: 99px; background: rgba(0,0,0,.4); border: 2px solid rgba(255,255,255,.2); overflow: hidden; }
   /* Soft cinematic vignette over the 3D view (between the 3D canvas and the label canvas, never takes touches). */
-  .vign { position: fixed; inset: 0; pointer-events: none; background: radial-gradient(ellipse 85% 75% at 50% 55%, transparent 55%, rgba(10,8,30,.38) 100%); }
+  .vign { position: fixed; inset: 0; pointer-events: none; background: radial-gradient(ellipse 85% 75% at 50% 55%, transparent 50%, rgba(8,4,28,.55) 100%); }
   .prog > i { display: block; height: 100%; width: 0; background: linear-gradient(90deg, #3be07a, #ffd23f, #ff4757); }
 </style>
 </head>
@@ -42,6 +42,7 @@
 <script src="../ortak/kit.js"></script>
 <script src="../ortak/fx.js"></script>
 <script src="../ortak/lib/three.min.js"></script>
+<script src="../ortak/fx3d.js"></script>
 <script src="render3d.js"></script>
 <script src="game.js"></script>
 </body>

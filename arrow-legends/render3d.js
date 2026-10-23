@@ -84,18 +84,18 @@
       let pr = Math.min(1.75, window.devicePixelRatio || 1); renderer.setPixelRatio(pr);
       const maxAniso = renderer.capabilities.getMaxAnisotropy ? renderer.capabilities.getMaxAnisotropy() : 1;
       if ('outputColorSpace' in renderer) renderer.outputColorSpace = T.SRGBColorSpace;
-      renderer.toneMapping = T.ACESFilmicToneMapping; renderer.toneMappingExposure = 1.02;
+      renderer.toneMapping = T.ACESFilmicToneMapping; renderer.toneMappingExposure = 1.1;
       // Real soft shadows from the key light (one 1024 map that follows the camera) under every character and prop.
       renderer.shadowMap.enabled = true; renderer.shadowMap.type = T.PCFSoftShadowMap;
 
       const scene = new T.Scene();
       const camera = new T.PerspectiveCamera(46, 1, 1, 400);
-      const hemi = new T.HemisphereLight(0xc8d2ff, 0x3a2414, 0.5); scene.add(hemi);
+      const hemi = new T.HemisphereLight(0xa8c4ff, 0x2a1830, 0.62); scene.add(hemi);
       const sun = new T.DirectionalLight(0xffdcb0, 2.1); sun.position.set(-20, 60, 30); scene.add(sun, sun.target);
       sun.castShadow = true; sun.shadow.mapSize.set(1024, 1024); sun.shadow.bias = -0.0008; sun.shadow.normalBias = 0.04; sun.shadow.radius = 3;
       Object.assign(sun.shadow.camera, { left: -17, right: 17, top: 19, bottom: -19, near: 10, far: 140 }); sun.shadow.camera.updateProjectionMatrix();
       const aimSun = (x, z) => { sun.position.set(x - 18, 58, z + 26); sun.target.position.set(x, 0, z); sun.target.updateMatrixWorld(); };
-      const rim = new T.DirectionalLight(0x7fa8ff, 0.6); rim.position.set(25, 30, -60); scene.add(rim);
+      const rim = new T.DirectionalLight(0x6fc8ff, 0.95); rim.position.set(25, 30, -60); scene.add(rim);
       const torchL = new T.PointLight(0xffb060, 40, 22, 1.7), torchR = torchL.clone(), torchL2 = torchL.clone(), torchR2 = torchL.clone();
       scene.add(torchL, torchR); // torchL2/torchR2 kept as objects (positions are set) but not lit: four point lights cost too much on phones
       scene.fog = new T.Fog(0x1a1410, 60, 140);
@@ -286,6 +286,15 @@
       let amb = AMB.dust, pools = [];
       const room = new T.Group(); scene.add(room);
       const dyn = new T.Group(); scene.add(dyn);
+      // Shared effect system (ortak/fx3d.js): GPU sparks, bow flashes, arrow light trails, stone chips, floor cracks,
+      // chain lightning, camera shake and the hero's rune aura. Everything pooled; nothing allocated per hit.
+      const F3 = window.Fx3D ? Fx3D.create(scene, { unit: 1, particles: 1400, rocks: 80, decals: 16, bolts: 12 }) : null;
+      const heroAura = F3 ? F3.aura('#46e0ff', 3.4) : null; if (heroAura) heroAura.visible = false;
+      let rockCol = '#4a4650', runes = [], muzzleT = 0;
+      // Boss spotlight: a pulsing red-violet pool under the boss and a shaft of light from above (additive, no light).
+      const bossPool = new T.Mesh(new T.PlaneGeometry(1, 1).rotateX(-Math.PI / 2), new T.MeshBasicMaterial({ map: glowTex, color: '#ff2a5a', transparent: true, depthWrite: false, blending: T.AdditiveBlending, opacity: 0.5 }));
+      const bossBeam = new T.Mesh(new T.CylinderGeometry(1, 1.6, 16, 20, 1, true).translate(0, 8, 0), new T.MeshBasicMaterial({ map: beamTex, color: '#b04dff', transparent: true, depthWrite: false, blending: T.AdditiveBlending, side: T.DoubleSide, opacity: 0.5 }));
+      bossPool.visible = bossBeam.visible = false; bossPool.renderOrder = 3; scene.add(bossPool, bossBeam);
       let perfAcc = 0, perfN = 0, slowShadows = false, shadowTick = 0;
       let level = null, menuKey = '', door = null, portal = null, doorArrow = null, chevrons = [], angelG = null, chestG = null, spikesM = [], flames = [], heroRing = null;
       const ents = new Map();
@@ -569,15 +578,17 @@
       const meteorS = new T.Sprite(new T.SpriteMaterial(Object.assign({ map: glowTex, color: '#ff8a2a' }, add))); meteorS.visible = false; scene.add(meteorS);
       function fx(kind, x, z, color, n) {
         n = n || 10; color = color || '#ffe9a8';
-        if (kind === 'hit') { for (let k = 0; k < n; k++) emit(sparks, x, 1.4, z, rnd(-6, 6), rnd(1, 7), rnd(-6, 6), rnd(0.2, 0.45), color, 14); flare(x, 1.4, z, color, 2.6, 0.16); }
+        if (kind === 'hit') { for (let k = 0; k < n; k++) emit(sparks, x, 1.4, z, rnd(-6, 6), rnd(1, 7), rnd(-6, 6), rnd(0.2, 0.45), color, 14); flare(x, 1.4, z, color, 2.6, 0.16); if (F3) F3.impact(x, 1.4, z, color, n > 10 ? 1 : 0.7, n > 10 ? 3 : 2, rockCol); }
         else if (kind === 'die') {
+          if (F3) { F3.chips(x, z, n > 30 ? 14 : 6, rockCol, n > 30 ? 1.6 : 1.1); F3.crack(x, z, n > 30 ? 5 : 2.6, 2.6, 0, 0.75); F3.impact(x, 1.4, z, color, n > 30 ? 1.6 : 1, 0); F3.shake(n > 30 ? 0.5 : 0.12); }
           flare(x, 1.4, z, color, 5, 0.3);
           for (let k = 0; k < n; k++) emit(sparks, x + rnd(-0.6, 0.6), rnd(0.8, 2.2), z + rnd(-0.6, 0.6), rnd(-5, 5), rnd(3, 9), rnd(-5, 5), rnd(0.6, 1.1), k % 3 ? color : '#ffd23f', 18);
           for (let k = 0; k < 6; k++) emit(puffs, x + rnd(-0.8, 0.8), 0.6, z + rnd(-0.8, 0.8), rnd(-1.2, 1.2), rnd(0.5, 1.5), rnd(-1.2, 1.2), rnd(0.5, 0.8), '#6a5a4a');
         } else if (kind === 'rise') for (let k = 0; k < 8; k++) { const a = k / 8 * Math.PI * 2; emit(puffs, x + Math.sin(a), 0.3, z + Math.cos(a), Math.sin(a) * 2, 0.8, Math.cos(a) * 2, 0.6, '#5a4a3a'); }
         else if (kind === 'blink') { for (let k = 0; k < 18; k++) emit(sparks, x, rnd(0.3, 2.8), z, rnd(-3, 3), rnd(-1, 3), rnd(-3, 3), rnd(0.3, 0.7), '#c77dff'); emit(puffs, x, 1.4, z, 0, 0, 0, 0.5, '#9d4dff'); }
         else if (kind === 'hurt') for (let k = 0; k < n; k++) emit(sparks, x, 1.5, z, rnd(-4, 4), rnd(1, 5), rnd(-4, 4), 0.35, color, 12);
-        else if (kind === 'slam') for (let k = 0; k < 30; k++) { const a = k / 30 * Math.PI * 2; emit(puffs, x + Math.sin(a) * 2, 0.4, z + Math.cos(a) * 2, Math.sin(a) * 9, 1, Math.cos(a) * 9, 0.6, '#8a7a6a'); }
+        else if (kind === 'slam') { for (let k = 0; k < 30; k++) { const a = k / 30 * Math.PI * 2; emit(puffs, x + Math.sin(a) * 2, 0.4, z + Math.cos(a) * 2, Math.sin(a) * 9, 1, Math.cos(a) * 9, 0.6, '#8a7a6a'); }
+          if (F3) { F3.crack(x, z, 7, 3.2, 0, 0.95); F3.chips(x, z, 16, rockCol, 1.8); F3.shake(0.55); } }
         else if (kind === 'door') for (let k = 0; k < 30; k++) emit(sparks, x + rnd(-2, 2), rnd(0, 3), z + rnd(0, 1), rnd(-1, 1), rnd(1, 4), rnd(0, 2), rnd(0.6, 1.2), '#9effc8');
         else if (kind === 'levelup') {
           for (let k = 0; k < n; k++) { const a = Math.random() * Math.PI * 2, r = rnd(0.3, 1.4); emit(sparks, x + Math.sin(a) * r, rnd(0, 1), z + Math.cos(a) * r, 0, rnd(4, 9), 0, rnd(0.6, 1), color); }
@@ -595,26 +606,31 @@
           for (let k = 0; k < 30; k++) { const a = k / 30 * Math.PI * 2; emit(sparks, x + Math.sin(a) * 0.4, rnd(0.6, 2.2), z + Math.cos(a) * 0.4, Math.sin(a) * 7, rnd(0, 3), Math.cos(a) * 7, rnd(0.4, 0.8), k % 2 ? '#bff4ff' : '#ffffff', 4); }
           ring(x, z, '#8fe6ff', 4.4, 0.45);
         } else if (kind === 'crit') {
+          if (F3) { F3.crack(x, z, 3.6, 2.8, 0, 0.9); F3.chips(x, z, 8, rockCol, 1.3); F3.impact(x, 1.5, z, '#ffd23f', 1.5, 0); F3.shake(0.28); }
           flare(x, 1.5, z, '#ffffff', 8, 0.22); flare(x, 1.5, z, '#ffb02a', 11, 0.4);
           for (let k = 0; k < 44; k++) { const a = Math.random() * Math.PI * 2, v = rnd(8, 16); emit(sparks, x, 1.4, z, Math.sin(a) * v, rnd(2, 9), Math.cos(a) * v, rnd(0.25, 0.55), k % 2 ? '#ffd23f' : '#ff5a3a', 10); }
           ring(x, z, '#ffd23f', 5.5, 0.35); ring(x, z, '#ffffff', 3, 0.2);
           punch = Math.max(punch, 1); screenFlash('rgba(255,220,140,.55)', 0.6);
         } else if (kind === 'zapfx') {
-          lightning(x, 1.3, z, color.x2, 1.3, color.z2, 0.32);
-          lightning(color.x2, 14, color.z2, color.x2, 0.2, color.z2, 0.5);
+          // Chain lightning: violet -> acid green, forking, jumping enemy to enemy (and a strike from above).
+          if (F3) { F3.bolt(x, 1.3, z, color.x2, 1.3, color.z2, { w: 0.5, colA: '#b04dff', colB: '#7dff4a', branches: 2, life: 0.26 }); F3.bolt(color.x2, 12, color.z2, color.x2, 0.3, color.z2, { w: 0.6, colA: '#c77dff', colB: '#e8ffd0', branches: 1, life: 0.2, sparks: 4 }); F3.crack(color.x2, color.z2, 2.2, 1.6, 1, 0.5); }
+          else { lightning(x, 1.3, z, color.x2, 1.3, color.z2, 0.32); lightning(color.x2, 14, color.z2, color.x2, 0.2, color.z2, 0.5); }
           flare(color.x2, 1.4, color.z2, '#c77dff', 6, 0.25); flare(x, 1.4, z, '#e9d4ff', 3, 0.15);
           for (let k = 0; k < 16; k++) emit(sparks, color.x2, 1.2, color.z2, rnd(-7, 7), rnd(2, 9), rnd(-7, 7), rnd(0.2, 0.45), k % 2 ? '#c77dff' : '#ffffff', 12);
           ring(color.x2, color.z2, '#c77dff', 3.4, 0.3); screenFlash('rgba(200,150,255,.45)', 0.45);
         } else if (kind === 'nova') {
+          if (F3) { F3.crack(x, z, 6, 2.6, 1, 0.6); F3.shake(0.3); }
           flare(x, 1.4, z, '#c48bff', 9, 0.35); flare(x, 1.4, z, '#ffffff', 4, 0.15);
           for (let k = 0; k < 60; k++) { const a = k / 60 * Math.PI * 2, v = rnd(12, 18); emit(sparks, x + Math.sin(a), 1.2, z + Math.cos(a), Math.sin(a) * v, rnd(0, 2), Math.cos(a) * v, rnd(0.3, 0.5), k % 3 ? '#b36bff' : '#ffffff'); }
           ring(x, z, '#b36bff', 12, 0.45); ring(x, z, '#ffffff', 7, 0.25); screenFlash('rgba(180,120,255,.4)', 0.4); punch = Math.max(punch, 0.6);
         } else if (kind === 'meteorhit') {
+          if (F3) F3.explosion(x, 1, z, 2.4, { rocks: 12, shake: 0.45, rockCol });
           flare(x, 1.5, z, '#ffffff', 9, 0.2); flare(x, 1.5, z, '#ff6a10', 14, 0.5);
           for (let k = 0; k < 60; k++) { const a = Math.random() * Math.PI * 2, v = rnd(4, 14); emit(flamesC, x, 1, z, Math.sin(a) * v, rnd(3, 12), Math.cos(a) * v, rnd(0.4, 0.9), k % 3 ? '#ff5a10' : '#ffd23f', 8); }
           for (let k = 0; k < 10; k++) emit(puffs, x + rnd(-1.5, 1.5), 1, z + rnd(-1.5, 1.5), rnd(-2, 2), rnd(1, 4), rnd(-2, 2), 1.2, '#2e2018');
           ring(x, z, '#ff7a1a', 8, 0.5); ring(x, z, '#ffd23f', 4.5, 0.3); screenFlash('rgba(255,150,60,.55)', 0.55); punch = Math.max(punch, 1);
         } else if (kind === 'rainhit') {
+          if (F3) F3.chips(x, z, 4, rockCol, 1);
           flare(x, 1, z, '#fff1a8', 4.5, 0.2);
           for (let k = 0; k < 24; k++) emit(sparks, x + rnd(-1.6, 1.6), 0.4, z + rnd(-1.6, 1.6), rnd(-3, 3), rnd(3, 8), rnd(-3, 3), rnd(0.3, 0.6), k % 2 ? '#fff1a8' : '#ffb347', 14);
           for (let k = 0; k < 6; k++) emit(puffs, x + rnd(-1.5, 1.5), 0.5, z + rnd(-1.5, 1.5), rnd(-1, 1), 1, rnd(-1, 1), 0.6, '#6a5a4a');
@@ -680,7 +696,8 @@
         let s = S.chapter * 13 + S.room;
         const rr = () => { s = (s * 16807) % 2147483647; return s / 2147483647; };
         { const fl = stoneFloor(S.chapter * 100 + S.room, ch.floor, th.tiles[0]);
-          const floor = new T.Mesh(new T.PlaneGeometry(2 * RW + 2, 2 * RH + 2).rotateX(-Math.PI / 2), new T.MeshLambertMaterial({ map: fl.map, bumpMap: fl.bump, bumpScale: 2.2 }));
+          // A cool tint on every floor: warm torchlight against teal stone reads more cinematic.
+          const floor = new T.Mesh(new T.PlaneGeometry(2 * RW + 2, 2 * RH + 2).rotateX(-Math.PI / 2), new T.MeshLambertMaterial({ map: fl.map, bumpMap: fl.bump, bumpScale: 2.2, color: '#c8e4e6' }));
           floor.receiveShadow = true; room.add(floor);
           // The floor runs on past the open front (the lower camera sees it) so no black band shows under the room.
           const apron = new T.Mesh(new T.PlaneGeometry(2 * RW + 2, 16).rotateX(-Math.PI / 2), new T.MeshLambertMaterial({ map: fl.map, color: '#d8d0c4' }));
@@ -790,7 +807,19 @@
         if (S.angel) buildAngel(S.angel.x, S.angel.z);
         ents.forEach(g => dyn.remove(g)); ents.clear();
         heroRing = new T.Mesh(new T.PlaneGeometry(3, 3).rotateX(-Math.PI / 2), new T.MeshBasicMaterial(Object.assign({ map: ringTex, color: '#46e0ff' }, add)));
-        heroRing.position.y = 0.07; room.add(heroRing);
+        heroRing.position.y = 0.07; heroRing.visible = !heroAura; room.add(heroRing);
+        // Stone chips take the floor's colour; a few glowing runes are carved into the floor (off the carpet).
+        rockCol = '#' + new T.Color(ch.floor || '#8d8478').multiplyScalar(0.55).getHexString();
+        runes = [];
+        if (F3) {
+          const rc = th.pool === 'lava' ? '#ff7a2a' : th.pool === 'ice' ? '#8fe6ff' : th.pool === 'water' ? '#46e0ff' : (S.chapter % 2 ? '#46e0ff' : '#b06aff');
+          for (let k = 0; k < 3; k++) {
+            const x = (rr() < 0.5 ? -1 : 1) * (5 + rr() * (RW - 8)), z = -RH + 6 + rr() * (2 * RH - 12);
+            if (S.props.some(o => Math.hypot(o.x - x, o.z - z) < o.r + 2.2) || pools.some(q => Math.hypot(q.x - x, q.z - z) < q.r + 2.4)) continue;
+            const m = new T.Mesh(new T.PlaneGeometry(3.4, 3.4).rotateX(-Math.PI / 2), new T.MeshBasicMaterial(Object.assign({ map: Fx3D.tex.rune(), color: rc, opacity: 0.4 }, add)));
+            m.position.set(x, 0.06, z); m.rotation.y = rr() * 6; m.renderOrder = 2; room.add(m); runes.push(m);
+          }
+        }
         // A soft pool of light around the hero keeps dark outfits readable on the stone floor (cheaper than a light).
         const pool = new T.Mesh(new T.PlaneGeometry(7, 7).rotateX(-Math.PI / 2), new T.MeshBasicMaterial(Object.assign({ map: heroPoolTex, color: '#ffe2b0', opacity: 0.32 }, add)));
         pool.position.y = 0.06; heroRing.userData.pool = pool; room.add(pool);
@@ -952,7 +981,7 @@
         is3D: true,
         fit() { const W = canvas.clientWidth || innerWidth, H = canvas.clientHeight || innerHeight; renderer.setSize(W, H, false); camera.aspect = W / H; camera.updateProjectionMatrix(); camKey = ''; },
         project(x, z, h) { v3.set(x, h || 0, z).project(camera); const W = canvas.clientWidth || innerWidth, H = canvas.clientHeight || innerHeight; return { x: (v3.x + 1) / 2 * W, y: (1 - v3.y) / 2 * H }; },
-        setRoom(S, ch) { level = S; menuKey = ''; buildRoom(S, ch); },
+        setRoom(S, ch) { level = S; menuKey = ''; buildRoom(S, ch); if (F3 && !F3.warmed) { F3.warmed = true; F3.warm(S.p.x, 1.3, S.p.z); } },
         setMenu(hero, ch, tint, dim, skin) { const k = hero + (tint || '') + (dim ? 'd' : '') + (skin ? skin.id : '') + ch.fog + (ch.th ? ch.th.wall + ch.th.fx : ''); if (k === menuKey) return; menuKey = k; level = null; buildMenu(hero, ch, tint, dim, skin); },
         // Outfit put on: the menu hero hops and spins in a burst of the outfit's colours.
         celebrate() {
@@ -977,7 +1006,11 @@
               else if (avg > 1 / 38 && pr > 1.25) { pr = 1.25; renderer.setPixelRatio(pr); R.fit(); }
             }
           }
-          for (const f of flames) f.scale.setScalar(2 + Math.sin(time * 11 + f.position.z) * 0.25 + Math.sin(time * 23 + f.position.x) * 0.12);
+          if (F3) F3.update(dt);
+          for (const f of flames) f.scale.setScalar(2.9 + Math.sin(time * 11 + f.position.z) * 0.35 + Math.sin(time * 23 + f.position.x) * 0.16);
+          // Embers drifting up from the torches, and the floor runes breathing.
+          if (F3 && flames.length && dt > 0 && Math.random() < dt * 9) { const f = flames[(Math.random() * flames.length) | 0]; F3.mote(f.position.x + rnd(-0.2, 0.2), f.position.y + 0.2, f.position.z + 0.2, Math.random() < 0.5 ? '#ffb04a' : '#ff6a1a', 0.16, rnd(1, 1.8), rnd(0.8, 1.6)); }
+          for (let k = 0; k < runes.length; k++) runes[k].material.opacity = 0.32 + 0.22 * Math.sin(time * 1.6 + k * 2.1);
           const fl = 1 + Math.sin(time * 9) * 0.08;
           torchL.intensity = torchR.intensity = torchL2.intensity = torchR2.intensity = 40 * fl;
           if (dust) {
@@ -1020,7 +1053,8 @@
           }
           if (!S || mode === 'menu') {
             // In-run skill effects live on the scene, not the room: never let one from the last run linger on the menu hero.
-            for (const o of [bubble, iceG, auraM, auraF, rageG, haloS, giantS, meteorS, ...wisdomS]) o.visible = false;
+            for (const o of [bubble, iceG, auraM, auraF, rageG, haloS, giantS, meteorS, bossPool, bossBeam, ...wisdomS]) o.visible = false;
+            if (heroAura) heroAura.visible = false;
             // Legendary / mythic gear shows on the menu hero too: aura rings, a light pillar and sparkles.
             const mg = R.menuGear || {};
             auraG.visible = !!mg.aura; aura2.visible = pillar.visible = !!mg.mythic; handG.visible = false;
@@ -1084,6 +1118,12 @@
           };
           sync('hero', S.p, S.heroModel || S.hero, 1, true);
           if (heroRing) { heroRing.position.set(S.p.x, 0.07, S.p.z); heroRing.rotation.y = time; heroRing.userData.pool.position.set(S.p.x, 0.06, S.p.z); }
+          if (heroAura) { heroAura.visible = !S.p.dead; heroAura.position.set(S.p.x, 0.08, S.p.z); heroAura.tick(time); }
+          // Boss spotlight follows the living boss.
+          { const b = S.enemies.find(e => e.boss && e.hp > 0 && e.state !== 'rise'); bossPool.visible = bossBeam.visible = !!b;
+            if (b) { const r = (b.r || 2) * 2.6; bossPool.position.set(b.x, 0.1, b.z); bossPool.scale.set(r * 2.4, 1, r * 2.4); bossPool.material.opacity = 0.38 + 0.12 * Math.sin(time * 3);
+              bossBeam.position.set(b.x, 0, b.z); bossBeam.scale.set(r * 0.42, 1, r * 0.42); bossBeam.material.opacity = 0.22 + 0.06 * Math.sin(time * 2.1);
+              if (F3 && Math.random() < dt * 10) { const a = Math.random() * 6.28; F3.mote(b.x + Math.sin(a) * r * 0.8, 0.3, b.z + Math.cos(a) * r * 0.8, Math.random() < 0.5 ? '#c77dff' : '#ff4a7a', 0.22, rnd(1, 1.6), rnd(1.5, 3)); } } }
           // Gear on the hero: a coloured aura ring for good armour/jewels, a glow at the weapon hand, sparkles for legendaries.
           const gl = S.gearLook || {};
           auraG.visible = !!gl.aura; if (gl.aura) { auraG.material.color.set(gl.aura); auraG.position.set(S.p.x, 0.12, S.p.z); auraG.rotation.y = -time * 0.8; auraG.material.opacity = 0.55 + 0.15 * Math.sin(time * 3); }
@@ -1121,17 +1161,21 @@
           const elemCol2 = skl.fire ? '#ffd23f' : skl.ice ? '#ffffff' : '#f2d4ff', elemUp = skl.ice && !skl.fire ? -0.5 : 1.5;
           S.shots.forEach((s, i) => {
             const m = shots.get(i); m.geometry = SHOT_GEO[kind]; m.material = shotMat[kind]; m.position.set(s.x, 1.3, s.z); m.rotation.set(0, s.a + (kind === 'axe' || kind === 'blade' ? time * 14 : 0), 0);
-            const t = trails.get(i); t.position.set(s.x, 1.3, s.z); t.rotation.set(0, s.a, 0); t.material.color.set(elemCol || SHOT_COL[kind]); t.scale.set(elemCol ? 1.8 : 1, 1, elemCol ? 1.7 : 1);
+            const t = trails.get(i); t.position.set(s.x, 1.3, s.z); t.rotation.set(0, s.a, 0); t.material.color.set(elemCol || (kind === 'bolt' ? '#9ff0ff' : SHOT_COL[kind])); t.scale.set(elemCol ? 1.8 : 1, 1, elemCol ? 1.7 : 1);
             const pw = 1 + 0.06 * ((skl.atk || 0) + (skl.atkS || 0));
             t.scale.z *= 1 + 0.12 * (skl.atkS || 0) + 0.08 * (skl.pierce || 0);
             const sg = shotGlows.get(i); sg.position.set(s.x, 1.3, s.z); sg.material.color.set(elemCol || (skl.atkS ? '#e6f4ff' : '#fff1a8')); sg.scale.setScalar((elemCol ? 2.8 : 1.4) * pw * (0.9 + 0.2 * Math.sin(time * 40 + i)));
+            // Light trail: a glowing dot left behind every frame (GPU particles, fades in ~0.16 s).
+            if (F3 && dt > 0) F3.trail(s.x - Math.sin(s.a) * 0.5, 1.3, s.z - Math.cos(s.a) * 0.5, elemCol || (i % 3 === 1 ? '#ff7ad8' : '#5fe0ff'), elemCol ? 0.75 : 0.6, 0.16);
             if (!s._seen) { s._seen = 1; flare(s.x, 1.3, s.z, elemCol || '#fff1a8', (elemCol ? 3.4 : 2) * pw, 0.12);
+              // Bow release: one bright burst with a fan of sparks per volley (several arrows can leave on one frame).
+              if (F3 && !s.child && muzzleT <= 0) { muzzleT = 0.06; const fa = S.p.face; F3.muzzle(S.p.x + Math.sin(fa) * 1.1, 1.45, S.p.z + Math.cos(fa) * 1.1, Math.sin(fa), Math.cos(fa), elemCol || '#ffc46a', 1.15); }
               if (skl.spdS || skl.spd) for (let k = 0; k < 3; k++) emit(sparks, s.x, 1.3, s.z, rnd(-2, 2), rnd(0.5, 2), rnd(-2, 2), 0.2, '#ffe27a'); }
             if (skl.atkS && Math.random() < dt * 30) emit(sparks, s.x, 1.3, s.z, 0, 0.2, 0, 0.22, '#eaf6ff');
             if (skl.fire && Math.random() < dt * 60) emit(flamesC, s.x + rnd(-0.2, 0.2), 1.3, s.z + rnd(-0.2, 0.2), rnd(-0.5, 0.5), rnd(0.5, 1.5), rnd(-0.5, 0.5), rnd(0.15, 0.3), Math.random() < 0.5 ? '#ff6a10' : '#ffc23a', -2);
             if (elemCol && Math.random() < dt * 40) emit(sparks, s.x + rnd(-0.15, 0.15), 1.3 + rnd(-0.15, 0.15), s.z + rnd(-0.15, 0.15), rnd(-0.6, 0.6), elemUp, rnd(-0.6, 0.6), rnd(0.2, 0.4), Math.random() < 0.5 ? elemCol : elemCol2, elemUp < 0 ? 3 : -2);
           });
-          shots.hide(S.shots.length); trails.hide(S.shots.length); shotGlows.hide(S.shots.length);
+          shots.hide(S.shots.length); trails.hide(S.shots.length); shotGlows.hide(S.shots.length); muzzleT -= dt;
           S.foes.forEach((s, i) => {
             const ax = s.kind === 'axe', m = foes.get(i);
             m.geometry = ax ? foeAxe : s.kind === 'bolt' ? foeBolt : foeOrb; m.material = ax ? bmat('#ffffff', { vertexColors: true }) : bmat(s.kind === 'bolt' ? '#ff5050' : '#e07bff');
@@ -1228,6 +1272,7 @@
           if (chestG) animChest(S.chest, dt);
           camRoom(S, dt);
           if (R.artCam) { camera.position.set(-8.5, 8, 15.5); camera.lookAt(0, 0, -1.5); }
+          if (F3) camera.position.add(F3.shakeOffset(0.35));
           renderer.render(scene, camera);
         },
       };

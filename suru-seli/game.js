@@ -83,6 +83,7 @@
   if (document.fonts && document.fonts.load) document.fonts.load("800 14px 'Baloo'").catch(() => { });
   const toWorld = e => (R3 ? R3.pick(e.clientX, e.clientY) : { x: (e.clientX - ox) / sc, y: (e.clientY - oy) / sc });
   const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+  const frac = v => v - Math.floor(v);
   function rng(seed) {
     return function () {
       seed |= 0; seed = seed + 0x6D2B79F5 | 0;
@@ -463,17 +464,22 @@
       }
     }
 
-    // Fire: one volley = up to 12 bullets across the formation; damage scales with the squad size.
+    // Fire: one volley = up to 12 bullets; damage scales with the squad size. The shooters are spread over the whole
+    // formation (a different set of soldiers each volley) and fire from their own place in it, with a slight spread,
+    // so a volley reads as a ragged salvo instead of one straight row of bullets. The jitter is a fixed hash, not
+    // Math.random(), so the simulation's random sequence is unchanged.
     const w = WEAPONS[q.weapon];
     S.fireT -= dt;
     if (S.fireT <= 0 && q.n > 0) {
       S.fireT = w.rate / (1 + 0.06 * upgLv('rate'));
       S.fireFlash = 0.07;
-      const k = Math.min(q.n, 12), per = w.dmg * (1 + 0.08 * upgLv('dmg')) * firepower(q.n) / k, half = squadHalf() - 6;
+      const k = Math.min(q.n, 12), per = w.dmg * (1 + 0.08 * upgLv('dmg')) * firepower(q.n) / k;
+      const form = formation(q.n), nf = form.length, vol = S.volley = (S.volley || 0) + 1;
       for (let i = 0; i < k; i++) {
-        const bx = q.x + (k === 1 ? 0 : -half + (2 * half * i) / (k - 1));
+        const f = form[Math.floor((i + frac(vol * 0.618)) * nf / k) % nf], h1 = frac(Math.sin(vol * 12.9898 + i * 78.233) * 43758.5453), h2 = frac(h1 * 7.31 + i * 0.17);
+        const bx = q.x + f.x + (h1 - 0.5) * 5, by = SQUAD_Y - 14 + Math.min(f.y, 44) * 0.8 - h2 * 10, jv = (h2 - 0.5) * 16;
         for (let sp = 0; sp < w.spread; sp++) {
-          S.bullets.push({ x: bx, y: SQUAD_Y - 14, vx: (sp - (w.spread - 1) / 2) * 90, dmg: per / w.spread, speed: w.speed, splash: w.splash, pierce: w.pierce, kind: w.kind, hits: 0 });
+          S.bullets.push({ x: bx, y: by, vx: (sp - (w.spread - 1) / 2) * 90 + jv, dmg: per / w.spread, speed: w.speed, splash: w.splash, pierce: w.pierce, kind: w.kind, hits: 0 });
         }
       }
       if (Math.random() < 0.5) Sfx.play('shoot');
@@ -766,8 +772,10 @@
     outlined(String(q.n), sp.x, sy + 1, 18);
     outlined(w.icon, sp.x + 44, sy, 18);
     for (const g of S.gates) {
-      const p = P(g.x, g.y, is3D ? 34 : 0);
-      outlined(g.mul ? 'x2' : (g.val >= 1 ? '+' : '') + Math.floor(g.val), p.x, p.y, is3D ? 28 : 22, '#fff', g.mul || g.val >= 1 ? '#0b5e29' : '#7a0f1e');
+      const p = P(g.x, g.y, is3D ? 36 : 0), good = g.mul || g.val >= 1, txt = g.mul ? 'x2' : (g.val >= 1 ? '+' : '') + Math.floor(g.val);
+      // Neon halo behind the number (a wide soft stroke: no shadowBlur, which is slow on phones).
+      if (is3D) { ctx.font = '800 40px ' + FONT; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.lineJoin = 'round'; ctx.lineWidth = 22; ctx.strokeStyle = g.mul ? 'rgba(255,210,63,.32)' : good ? 'rgba(59,224,122,.34)' : 'rgba(255,71,87,.36)'; ctx.strokeText(txt, p.x, p.y); }
+      outlined(txt, p.x, p.y, is3D ? 40 : 22, '#fff', good ? '#0b5e29' : '#7a0f1e');
     }
     for (const c of S.crates) {
       const p = P(c.x, c.y, is3D ? 50 : 0), y = is3D ? p.y : p.y - 30;

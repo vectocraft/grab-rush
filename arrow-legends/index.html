@@ -26,7 +26,7 @@
   .roomchip { flex: 1; text-align: center; font-weight: 800; font-size: 19px; text-shadow: 0 2px 0 var(--ink); }
   body.inmenu .hud, body.shot .hud { display: none; }
   /* Lens vignette over the 3D view: corners fall into shadow, the arena around the hero stays bright. */
-  body::after { content: ''; position: fixed; inset: 0; z-index: 1; pointer-events: none; background: radial-gradient(ellipse 85% 70% at 50% 58%, transparent 55%, rgba(8,4,2,.55) 100%); }
+  body::after { content: ''; position: fixed; inset: 0; z-index: 1; pointer-events: none; background: radial-gradient(ellipse 85% 70% at 50% 58%, transparent 48%, rgba(6,4,16,.66) 100%); }
   #c { z-index: 2; }
   body.inmenu::after { background: radial-gradient(ellipse 90% 70% at 50% 40%, transparent 60%, rgba(8,4,2,.5) 100%); }
   /* Menu */
@@ -250,6 +250,7 @@
 <script src="../ortak/fx.js"></script>
 <script src="../ortak/art.js"></script>
 <script src="../ortak/lib/three.min.js"></script>
+<script src="../ortak/fx3d.js"></script>
 <script src="chars.js"></script>
 <script src="props.js"></script>
 <script src="icons.js"></script>
