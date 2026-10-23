@@ -8,7 +8,7 @@
   const T = window.THREE;
   const CX = 200, CZ = 360, SQUAD_Y = 610, TILE = 60, NEAR_Y = 1050, FAR_Y = -1800;
   // MAX_F: extra marchers that only thicken the crowd on screen (the squad count in the game is unchanged).
-  const MAX_S = 64, MAX_F = 96, MAX_SG = MAX_S + MAX_F, MAX_E = 240, MAX_B = 800, MAX_FX = 400;
+  const MAX_S = 64, MAX_F = 96, MAX_SG = MAX_S + MAX_F, MAX_E = 360, MAX_B = 800, MAX_FX = 400;
   const TAU = Math.PI * 2;
 
   // ---------- Procedural textures ----------
@@ -377,9 +377,9 @@
         if (fillCache.n === n) return fillCache.pts;
         const pts = [], cols = Math.min(6, n), rows = Math.ceil(form.length / cols);
         if (n >= 8) {
-          for (let r = 0; r < rows - 1; r++) for (let c = 0; c < cols - 1; c++) if ((r + 1) * cols + c + 1 < form.length) pts.push({ x: (c - (cols - 1) / 2) * 12 + 6, y: r * 11 + 5.5 });
+          for (let r = 0; r < rows - 1; r++) for (let c = 0; c < cols - 1; c++) if ((r + 1) * cols + c + 1 < form.length) pts.push({ x: (c - (cols - 1) / 2) * 14 + 7, y: r * 12.5 + 6.2 });
           const extra = Math.min(MAX_F - pts.length, 44, Math.round(Math.max(0, n - 60) * 0.8));
-          for (let k = 0; k < extra; k++) { const c = k % 11, r = Math.floor(k / 11); pts.push({ x: (c - 5) * 6 + (r % 2) * 3, y: rows * 11 + r * 8 }); }
+          for (let k = 0; k < extra; k++) { const c = k % 11, r = Math.floor(k / 11); pts.push({ x: (c - 5) * 7 + (r % 2) * 3.5, y: rows * 12.5 + r * 9 }); }
         }
         pts.forEach((p, i) => { p.x += Math.sin(i * 12.9898) * 1.6; p.y += Math.cos(i * 7.233) * 1.4; });
         fillCache.n = n; fillCache.pts = pts.slice(0, MAX_F); return fillCache.pts;
@@ -423,6 +423,12 @@
       const bombs = inst(new T.CapsuleGeometry(2.6, 6, 3, 8), std('#3a4030', { metalness: 0.5, roughness: 0.4 }), 60, false, true);
       const markers = inst(new T.RingGeometry(0.75, 1, 28).rotateX(-Math.PI / 2), additive('#ffffff'), 60, true, false);
       const MK_OWN = C_('#ffd23f'), MK_FOE = C_('#ff2a2a');
+      // Attack telegraphs: filled discs (additive, so overlapping zones get brighter) and their rims.
+      const zones = inst(new T.CircleGeometry(1, 36).rotateX(-Math.PI / 2), additive('#ffffff'), 40, true, false);
+      const zoneRims = inst(new T.RingGeometry(0.9, 1, 44).rotateX(-Math.PI / 2), additive('#ffffff'), 40, true, false);
+      zones.renderOrder = zoneRims.renderOrder = 2;
+      const ZONE_FOE = C_('#ff2a2a').multiplyScalar(0.45), ZONE_OWN = C_('#ffd23f').multiplyScalar(0.35);
+      const ringFx = []; let camKick = 0; const SCROLL_V = 70;
       const fire = inst(new T.IcosahedronGeometry(1, 2), new T.MeshBasicMaterial({ color: '#ffffff', transparent: true, opacity: 0.8, blending: T.AdditiveBlending, depthWrite: false }), MAX_FX, true, false);
       const rings = inst(new T.RingGeometry(0.82, 1, 40).rotateX(-Math.PI / 2), new T.MeshBasicMaterial({ color: '#ffffff', transparent: true, blending: T.AdditiveBlending, depthWrite: false }), 60, true, false);
       const smoke = inst(new T.IcosahedronGeometry(1, 2), new T.MeshLambertMaterial({ color: '#ffffff', transparent: true, opacity: 0.55, depthWrite: false }), MAX_FX, true, false);
@@ -519,40 +525,153 @@
         return { g, wallMat, towers, tips, braziers, smokeT: 0 };
       }
 
-      // Giant: a huge brute with a club.
-      function makeDev(root) {
-        const g = new T.Group(), skin = std('#7d1624'), dark = std('#3a1418');
-        for (const sx of [-1, 1]) add(g, new T.CapsuleGeometry(6, 18, 4, 10), dark, sx * 8, 13, 0);
-        const body = add(g, new T.CapsuleGeometry(15, 22, 6, 14), skin, 0, 46, 0);
-        add(g, new T.SphereGeometry(10, 16, 12), std('#c98a6a'), 0, 76, 3);
-        add(g, new T.SphereGeometry(11, 16, 10, 0, TAU, 0, Math.PI / 2), std('#2a1216'), 0, 79, 3);
-        for (const sx of [-1, 1]) { const h = add(g, new T.ConeGeometry(3, 12, 8), std('#e8e0d0'), sx * 9, 88, 3); h.rotation.z = -sx * 0.5; }
-        for (const sx of [-1, 1]) { add(g, new T.SphereGeometry(2, 8, 6), new T.MeshBasicMaterial({ color: '#fff0a0' }), sx * 4, 78, 12); glowSprite(g, '#ffb020', 14, sx * 4, 78, 14); }
-        const arm = new T.Group(); arm.position.set(18, 58, 0); g.add(arm);
-        add(arm, new T.CapsuleGeometry(4.5, 16, 4, 8), skin, 0, -10, 0);
-        const club = add(arm, new T.CylinderGeometry(4, 8, 40, 10), std('#6b4423'), 0, -18, 16); club.rotation.x = Math.PI / 2;
-        g.visible = false; root.add(g);
-        return { g, wallMat: body.material, arm, towers: [], smokeT: 0 };
+      // ---------- V2 bosses: armoured giant, siege tank, fire drake ----------
+      // Cel-shaded (same ramp as the soldiers) with an ink outline on the big parts so they read from the low camera.
+      function inked(parent, geo, mat, x, y, z, w) {
+        const m = add(parent, geo, mat, x, y, z, false);
+        const o = new T.Mesh(geo, inkMat(w || 0.9)); o.position.copy(m.position); parent.add(o); m.userData.ink = o;
+        return m;
       }
-      function makeTank(root) {
-        const g = new T.Group(), hull = std('#5c6b3c'), dark = std('#2b2f25');
-        add(g, new T.BoxGeometry(84, 22, 110), hull, 0, 20, 0);
+      const syncInk = m => { const o = m.userData.ink; if (o) { o.position.copy(m.position); o.rotation.copy(m.rotation); o.scale.copy(m.scale); } return m; };
+      const glowBasic = c => new T.MeshBasicMaterial({ color: c });
+
+      // Armoured giant: steel plate over red skin, a glowing furnace core in the chest, a visor slit that burns orange,
+      // spiked pauldrons and a rune hammer. Legs and the hammer arm animate (walk, wind-up, smash).
+      function makeDev(root) {
+        const g = new T.Group(), plate = toon('#8f98ab', { emissive: '#000000' }), dark = toon('#3a3f4e'), skin = toon('#8a2a2a'), trim = toon('#d9a640', { emissive: '#3a2400' });
+        const hot = glowBasic('#ffb04a');
+        const legs = [];
         for (const sx of [-1, 1]) {
-          add(g, new T.BoxGeometry(18, 20, 118), dark, sx * 46, 12, 0);
-          for (let k = -2; k <= 2; k++) add(g, new T.CylinderGeometry(8, 8, 20, 12), std('#444a3a'), sx * 46, 10, k * 24).rotation.z = Math.PI / 2;
+          const leg = new T.Group(); leg.position.set(sx * 11, 34, 0); g.add(leg); legs.push(leg);
+          inked(leg, new T.CapsuleGeometry(6.5, 12, 4, 10), skin, 0, -9, 0, 0.8);
+          inked(leg, new T.SphereGeometry(6.5, 12, 8), plate, 0, -18, 3, 0.7);                     // knee plate
+          inked(leg, new T.BoxGeometry(12, 14, 13), plate, 0, -26, 0.5, 0.8);                       // greave
+          inked(leg, new T.BoxGeometry(14, 6, 18), dark, 0, -32, 3, 0.8);                           // boot
         }
-        const turret = new T.Group(); turret.position.set(0, 36, -6); g.add(turret);
-        add(turret, new T.CylinderGeometry(26, 30, 18, 16), hull, 0, 0, 0);
-        const barrel = add(turret, new T.CylinderGeometry(4, 5, 60, 12), dark, 0, 2, 38); barrel.rotation.x = Math.PI / 2;
-        add(turret, new T.CylinderGeometry(6, 6, 8, 12), dark, 0, 2, 70).rotation.x = Math.PI / 2;      // muzzle brake
-        add(turret, new T.BoxGeometry(12, 8, 12), dark, 14, 12, -6);
-        const tip = new T.Object3D(); tip.position.set(0, 2, 76); turret.add(tip);
-        add(g, new T.CylinderGeometry(6, 6, 0.5, 16), std('#e23b3b'), 0, 31.5, 34, false);
-        // Headlights + a red sensor strip.
-        for (const sx of [-1, 1]) { add(g, new T.BoxGeometry(8, 5, 2), std('#fff2c0', { emissive: '#ffe9a0', emissiveIntensity: 1.4 }), sx * 28, 24, 56, false); glowSprite(g, '#ffe6a0', 34, sx * 28, 24, 60); }
-        add(g, new T.BoxGeometry(40, 2, 2), std('#ff3030', { emissive: '#ff2020', emissiveIntensity: 1.2 }), 0, 30, 56, false);
+        inked(g, new T.BoxGeometry(34, 12, 22), dark, 0, 38, 0, 0.9);                               // pelvis
+        add(g, new T.BoxGeometry(36, 4, 23), trim, 0, 42, 0, false);                                // belt
+        const body = inked(g, new T.CylinderGeometry(22, 16, 34, 10), plate, 0, 60, 0, 1);           // chest armour
+        add(g, new T.CylinderGeometry(23, 23, 3, 10), trim, 0, 74, 0, false);
+        // Furnace core: a hot disc with a pulsing glow (no light: an additive sprite).
+        add(g, new T.CylinderGeometry(6, 6, 2, 14), hot, 0, 62, 18.5, false).rotation.x = Math.PI / 2;
+        const core = glowSprite(g, '#ff7a1a', 38, 0, 62, 21);
+        for (const sx of [-1, 1]) {
+          inked(g, new T.SphereGeometry(12, 12, 8, 0, TAU, 0, Math.PI / 2), plate, sx * 25, 74, 0, 0.8);  // pauldron
+          for (let k = -1; k <= 1; k++) { const sp = add(g, new T.ConeGeometry(2.4, 10, 6), trim, sx * (25 + k * 4), 84, k * 5, false); sp.rotation.z = -sx * 0.35; }
+        }
+        // Helmet: dome + jaw guard, burning visor slit, curled horns.
+        inked(g, new T.SphereGeometry(11, 14, 10), plate, 0, 88, 2, 0.8);
+        inked(g, new T.BoxGeometry(17, 9, 14), dark, 0, 81, 5, 0.6);
+        add(g, new T.BoxGeometry(14, 2.4, 1), hot, 0, 88, 12.8, false);
+        const eyes = [glowSprite(g, '#ffb020', 18, -4, 88, 14), glowSprite(g, '#ffb020', 18, 4, 88, 14)];
+        for (const sx of [-1, 1]) { const h = inked(g, new T.ConeGeometry(3.2, 16, 8), toon('#efe6cf'), sx * 11, 96, 2, 0.4); h.rotation.z = -sx * 0.9; syncInk(h); }
+        // Left arm: a heavy gauntlet. Right arm: the rune hammer (pivots at the shoulder).
+        const armL = new T.Group(); armL.position.set(-26, 70, 0); g.add(armL);
+        inked(armL, new T.CapsuleGeometry(5, 16, 4, 8), skin, 0, -12, 0, 0.6);
+        inked(armL, new T.BoxGeometry(12, 12, 12), plate, 0, -26, 0, 0.6);
+        const arm = new T.Group(); arm.position.set(26, 70, 0); g.add(arm);
+        inked(arm, new T.CapsuleGeometry(5, 16, 4, 8), skin, 0, -12, 0, 0.6);
+        inked(arm, new T.BoxGeometry(12, 12, 12), plate, 0, -24, 0, 0.6);
+        const handle = add(arm, new T.CylinderGeometry(2, 2, 44, 8), toon('#5a3a22'), 0, -26, 16, false); handle.rotation.x = Math.PI / 2;
+        const head = inked(arm, new T.BoxGeometry(22, 16, 16), dark, 0, -26, 38, 0.8);
+        for (const sx of [-1, 1]) add(arm, new T.BoxGeometry(1, 10, 10), hot, sx * 11.2, -26, 38, false);
+        const rune = glowSprite(arm, '#ff7a1a', 26, 0, -26, 47);
+        g.visible = false; g.scale.setScalar(1.15); root.add(g);
+        return { g, wallMat: plate, arm, armL, legs, core, eyes, rune, head, towers: [], smokeT: 0 };
+      }
+
+      // Siege tank: wide hull with reactive armour blocks, running tracks (wheels spin with the sweep), twin cannons
+      // on a big turret, commander cupola with a machine gun, antenna, glowing exhaust stacks and a red sensor visor.
+      function makeTank(root) {
+        const g = new T.Group(), hull = toon('#5c6b3c', { emissive: '#000000' }), dark = toon('#2b2f25'), steel = toon('#7d8577'), hazard = toon('#e0b020');
+        inked(g, new T.BoxGeometry(84, 22, 110), hull, 0, 22, 0, 1);
+        inked(g, new T.BoxGeometry(70, 10, 30), hull, 0, 30, 46, 0.8).rotation.x = -0.35;           // sloped glacis
+        for (let k = -2; k <= 2; k++) add(g, new T.BoxGeometry(12, 6, 8), steel, k * 14, 36, 54, false).rotation.x = -0.35; // reactive blocks
+        for (let k = -3; k <= 3; k++) add(g, new T.BoxGeometry(6, 2, 0.6), k % 2 ? dark : hazard, k * 10, 26, 57.4, false);
+        const wheels = [];
+        for (const sx of [-1, 1]) {
+          inked(g, new T.BoxGeometry(18, 20, 122), dark, sx * 46, 12, 0, 0.8);
+          add(g, new T.BoxGeometry(20, 10, 112), hull, sx * 47, 24, 0, false);                       // side skirt
+          for (let k = -4; k <= 4; k++) add(g, new T.BoxGeometry(19, 1.6, 4), steel, sx * 46, 2.2, k * 13, false); // track links
+          for (let k = -2; k <= 2; k++) { const w = add(g, new T.CylinderGeometry(8, 8, 20, 10), steel, sx * 46, 10, k * 24, false); w.rotation.z = Math.PI / 2; wheels.push(w); }
+          // Exhaust stacks at the back.
+          add(g, new T.CylinderGeometry(3, 3.5, 16, 8), dark, sx * 26, 40, -50, false);
+          glowSprite(g, '#ff7a2a', 22, sx * 26, 50, -50);
+        }
+        const turret = new T.Group(); turret.position.set(0, 40, -6); g.add(turret);
+        inked(turret, new T.CylinderGeometry(28, 32, 20, 8), hull, 0, 0, 0, 1);
+        inked(turret, new T.BoxGeometry(40, 12, 30), hull, 0, 2, 22, 0.8);
+        const barrels = [];
+        for (const sx of [-1, 1]) {
+          const b = inked(turret, new T.CylinderGeometry(3.6, 4.4, 62, 12), dark, sx * 9, 2, 50, 0.6); b.rotation.x = Math.PI / 2; syncInk(b);
+          add(turret, new T.CylinderGeometry(5.6, 5.6, 9, 12), dark, sx * 9, 2, 82, false).rotation.x = Math.PI / 2;
+          barrels.push(b);
+        }
+        const tip = new T.Object3D(); tip.position.set(0, 2, 88); turret.add(tip);
+        // Cupola + machine gun, antenna, red sensor visor.
+        inked(turret, new T.CylinderGeometry(8, 9, 8, 10), hull, 14, 14, -8, 0.5);
+        add(turret, new T.BoxGeometry(2, 2, 18), dark, 14, 18, 2, false);
+        add(turret, new T.CylinderGeometry(0.5, 0.5, 46, 4), dark, -18, 30, -14, false);
+        add(turret, new T.SphereGeometry(1.4, 6, 4), glowBasic('#ff3030'), -18, 53, -14, false);
+        add(turret, new T.BoxGeometry(30, 3, 1), glowBasic('#ff2a2a'), 0, 8, 37.2, false);
+        const visor = glowSprite(turret, '#ff2a2a', 46, 0, 8, 39);
+        // Headlights.
+        for (const sx of [-1, 1]) { add(g, new T.BoxGeometry(8, 5, 2), std('#fff2c0', { emissive: '#ffe9a0', emissiveIntensity: 1.4 }), sx * 30, 26, 56, false); glowSprite(g, '#ffe6a0', 34, sx * 30, 26, 60); }
         g.visible = false; root.add(g);
-        return { g, wallMat: hull, turret, tip, towers: [], smokeT: 0 };
+        return { g, wallMat: hull, turret, tip, barrels, wheels, visor, towers: [], smokeT: 0, lastX: null };
+      }
+
+      // Fire drake: a scaled body with a spiked spine, a long neck and horned head (jaw opens to breathe), membrane
+      // wings that flap, a swaying tail, ember-glowing belly and eyes. Hovers over the enemy lane.
+      function wingGeo() {
+        // A bat-like membrane: a fan of triangles from the shoulder out to three finger tips.
+        const P = [0, 0, 0, 90, 18, 10, 70, 6, -30, 40, 0, -46, 10, 0, -30];
+        const g = new T.BufferGeometry();
+        g.setAttribute('position', new T.BufferAttribute(new Float32Array(P), 3));
+        g.setIndex([0, 1, 2, 0, 2, 3, 0, 3, 4]); g.computeVertexNormals(); return g;
+      }
+      function makeDragon(root) {
+        const g = new T.Group(), scale = toon('#9a1f2c', { emissive: '#000000' }), belly = toon('#f0a64a'), horn = toon('#f3e7c8'), dark = toon('#3a0a14');
+        const memb = lam('#c23440', { side: T.DoubleSide, emissive: '#4a0a14' });
+        const body = inked(g, new T.CapsuleGeometry(16, 34, 6, 14), scale, 0, 0, 0, 1); body.rotation.x = Math.PI / 2; syncInk(body);
+        const bel = add(g, new T.CapsuleGeometry(12, 28, 4, 10), belly, 0, -6, 2, false); bel.rotation.x = Math.PI / 2;
+        const bellyGlow = glowSprite(g, '#ff7a1a', 70, 0, -14, 4);
+        for (let k = 0; k < 6; k++) { const sp = add(g, new T.ConeGeometry(3, 10 - k, 6), dark, 0, 16 - k * 0.6, 22 - k * 9, false); sp.rotation.x = -0.4; }
+        // Neck (chain of spheres) and head.
+        const neck = [];
+        for (let k = 0; k < 4; k++) neck.push(inked(g, new T.SphereGeometry(9 - k * 0.8, 12, 8), scale, 0, 6 + k * 6, 28 + k * 9, 0.6));
+        const head = new T.Group(); head.position.set(0, 32, 66); g.add(head);
+        inked(head, new T.BoxGeometry(16, 12, 20), scale, 0, 0, 0, 0.7);
+        inked(head, new T.BoxGeometry(12, 7, 16), scale, 0, -1, 15, 0.6);                             // snout
+        const jaw = new T.Group(); jaw.position.set(0, -5, 4); head.add(jaw);
+        inked(jaw, new T.BoxGeometry(11, 4, 22), dark, 0, -2, 10, 0.5);
+        for (const sx of [-1, 1]) {
+          const h = inked(head, new T.ConeGeometry(2.6, 16, 6), horn, sx * 6, 9, -8, 0.4); h.rotation.x = -1.0; h.rotation.z = -sx * 0.3; syncInk(h);
+          add(head, new T.SphereGeometry(1.8, 8, 6), glowBasic('#ffe14a'), sx * 5, 3, 7.5, false);
+        }
+        const eyes = [glowSprite(head, '#ffb020', 14, -5, 3, 9), glowSprite(head, '#ffb020', 14, 5, 3, 9)];
+        const mouth = glowSprite(head, '#ff6a1a', 26, 0, -3, 24); mouth.visible = false;
+        const mouthTip = new T.Object3D(); mouthTip.position.set(0, -3, 26); head.add(mouthTip);
+        // Wings.
+        const wings = [];
+        for (const sx of [-1, 1]) {
+          const w = new T.Group(); w.position.set(sx * 12, 10, 10); g.add(w);
+          const m = add(w, wingGeo(), memb, 0, 0, 0, false); m.scale.x = sx;
+          for (const [x, y, z] of [[90, 18, 10], [70, 6, -30], [40, 0, -46]]) {
+            const len = Math.hypot(x, y, z), bone = add(w, new T.CylinderGeometry(1.2, 2, len, 5), dark, 0, 0, 0, false);
+            bone.position.set(sx * x / 2, y / 2, z / 2); bone.quaternion.setFromUnitVectors(new T.Vector3(0, 1, 0), new T.Vector3(sx * x, y, z).normalize());
+          }
+          wings.push({ w, sx });
+        }
+        // Tail.
+        const tail = [];
+        for (let k = 0; k < 6; k++) tail.push(inked(g, new T.SphereGeometry(8 - k * 1.1, 10, 8), scale, 0, -2 - k, -30 - k * 10, 0.5));
+        const tipSpike = add(g, new T.ConeGeometry(4, 12, 6), dark, 0, -8, -94, false); tipSpike.rotation.x = -Math.PI / 2;
+        // Tucked legs with claws.
+        for (const sx of [-1, 1]) for (const z of [-12, 16]) { const l = add(g, new T.CapsuleGeometry(3.6, 8, 3, 6), scale, sx * 12, -16, z, false); l.rotation.x = 0.5; add(g, new T.ConeGeometry(2, 5, 5), horn, sx * 12, -24, z + 4, false).rotation.x = Math.PI * 0.8; }
+        const aura = glowSprite(g, '#ff5a1a', 200, 0, 20, -30); aura.material.opacity = 0.35;
+        g.visible = false; g.scale.setScalar(1.6); root.add(g);
+        return { g, wallMat: scale, head, jaw, neck, wings, tail, tipSpike, eyes, mouth, mouthTip, bellyGlow, aura, breathT: 0, towers: [], smokeT: 0 };
       }
       // Gunship: armoured hull, glowing canopy, stub wings with rotary-gun pods, two engines with hot exhausts, a
       // spinning main and tail rotor, blinking navigation lights and a searchlight sweeping the road.
@@ -651,11 +770,148 @@
         return { g: grp, box, mat };
       }
 
+      // Shock landing: dust ring, cracks, stone chips, camera kick.
+      function landing(x, z, r) {
+        fx.crack(x, z, r * 0.14); fx.chips(x, z, 10, '#5a5060', 1.4); camKick = Math.max(camKick, 10);
+        for (let k = 0; k < 10; k++) { const a = k / 10 * TAU; puff(x + Math.cos(a) * r * 0.6, 4, z + Math.sin(a) * r * 0.5, 12, 1.2, SMOKE_L, 10); }
+        if (ringFx.length < 8) ringFx.push({ x, z, r, t: 0, c: C_('#ffd8a0') });
+      }
+      // Danger zone on the road: a red disc that fills toward its rim as the attack lands (u 0 -> 1) + pulsing ring.
+      let nZone = 0;
+      function zone(x, z, r, u, foe) {
+        if (nZone >= 40) return;
+        const k = r * Math.max(0.05, Math.min(1, u));
+        put(zones, nZone++, x, 0.9, z, k, 1, k, 0, 0, 0, foe ? ZONE_FOE : ZONE_OWN);
+        if (nmkZ < 40) put(zoneRims, nmkZ++, x, 1.0, z, r, 1, r, 0, 0, 0, foe ? MK_FOE : MK_OWN);
+      }
+      let nmkZ = 0;
+      // Boss death: the model shudders, tilts and sinks while explosions pop all over it, then one big blast.
+      function dyingBoss(d, dt) {
+        d.t += dt; const K = d.K, u = Math.min(1, d.t / 1.3);
+        K.g.position.set(d.x + Math.sin(d.t * 60) * 2 * (1 - u), d.y0 - (d.type === 'heli' || d.type === 'ejder' ? u * u * 120 : u * 18), d.z);
+        K.g.rotation.z = (d.type === 'kale' ? 0.05 : 0.5) * u * (d.x > 0 ? 1 : -1); K.g.rotation.x = 0.25 * u;
+        K.wallMat.emissive.setRGB(0.5 + 0.4 * Math.sin(d.t * 30), 0.2, 0.05);
+        if ((d.boomT -= dt) <= 0 && d.t < 1.2) {
+          d.boomT = 0.11;
+          const ex = d.x + rnd(-50, 50), ey = Math.max(10, K.g.position.y + rnd(0, 60)), ez = d.z + rnd(-20, 30);
+          fx.explosion(ex, ey, ez, rnd(10, 18), { n: 14, rocks: 4, shake: 0, rockCol: '#3c3644' }); boomFlash(ex, ey, ez, 90, 0.3);
+          puff(ex, ey, ez, 14, 1.6, C_('#4a4440'), 24); camKick = Math.max(camKick, 5);
+        }
+        if (!d.final && d.t >= 1.2) {
+          d.final = true; camKick = 18;
+          const fy = Math.max(10, K.g.position.y);
+          fx.explosion(d.x, fy, d.z, 40, { n: 60, rocks: 24, shake: 0, rockCol: '#3c3644' }); boomFlash(d.x, fy + 20, d.z, 360, 0.6);
+          fx.shower(d.x, fy + 10, d.z, 0, 1, '#ffd23f', 40); fx.crack(d.x, d.z, 14);
+          for (let k = 0; k < 16; k++) puff(d.x + rnd(-70, 70), fy + rnd(0, 50), d.z + rnd(-30, 40), rnd(16, 28), rnd(1.8, 2.8), C_(k % 2 ? '#5e5650' : '#2e2a2a'), rnd(16, 40));
+          ringFx.push({ x: d.x, z: d.z, r: 200, t: 0, c: C_('#ffb040') });
+        }
+      }
+
       function warmUp() {
         const hidden = [];
         scene.traverse(o => { if (!o.visible) { hidden.push(o); o.visible = true; } });
         try { renderer.compile(scene, camera); } catch (e) { }
         hidden.forEach(o => { o.visible = false; });
+      }
+
+      // ---------- V2 support abilities: transport helicopter, shield dome ----------
+      // Transport helicopter (built on first use): olive fuselage with an open side door, a door gunner on a minigun,
+      // two ropes the reinforcements slide down, spinning rotors, nav lights and a downwash ring of dust on the road.
+      let transport = null;
+      function makeTransport() {
+        const g = new T.Group(), body = toon('#5d6b45'), dark = toon('#22272a'), metal = toon('#8a9294');
+        const glassM = std('#9fe6ff', { emissive: '#2a7aa0', emissiveIntensity: 1 });
+        const fus = inked(g, new T.CapsuleGeometry(15, 44, 6, 14), body, 0, 0, 0, 0.8); fus.rotation.x = Math.PI / 2; syncInk(fus);
+        add(g, new T.SphereGeometry(12, 16, 10), glassM, 0, 4, 30, false).scale.set(1, 0.8, 1.1);
+        add(g, new T.BoxGeometry(1, 14, 20), dark, 15.2, -2, 2, false);                                // open door (dark opening)
+        const tail = inked(g, new T.BoxGeometry(6, 7, 60), body, 0, 6, -55, 0.6);
+        add(g, new T.BoxGeometry(2.4, 22, 14), body, 0, 15, -84, false);
+        const tailRotor = new T.Group(); tailRotor.position.set(3, 16, -86); g.add(tailRotor);
+        for (let k = 0; k < 3; k++) add(tailRotor, new T.BoxGeometry(1, 22, 3), dark, 0, 0, 0, false).rotation.x = k * Math.PI / 1.5;
+        const rotor = new T.Group(); rotor.position.set(0, 20, 0); g.add(rotor);
+        const bladeM = new T.MeshBasicMaterial({ color: '#2a3036', transparent: true, opacity: 0.45, depthWrite: false });
+        for (let k = 0; k < 4; k++) add(rotor, new T.BoxGeometry(124, 0.8, 4), bladeM, 0, 0, 0, false).rotation.y = k * Math.PI / 2;
+        const disc = add(rotor, new T.CircleGeometry(62, 28), new T.MeshBasicMaterial({ color: '#c8d4e8', transparent: true, opacity: 0.12, side: T.DoubleSide, depthWrite: false }), 0, 0.5, 0, false); disc.rotation.x = -Math.PI / 2;
+        for (const sx of [-1, 1]) add(g, new T.BoxGeometry(3, 3, 50), dark, sx * 13, -20, 0, false);
+        // Door gunner + minigun.
+        const gunner = new T.Group(); gunner.position.set(13, -4, 2); g.add(gunner);
+        const crewM = toon('#3b82f6');
+        add(gunner, new T.CapsuleGeometry(3, 3.4, 3, 8), crewM, 0, 0, 0, false);
+        add(gunner, new T.SphereGeometry(2.6, 10, 8), toon('#f1c38f'), 0, 6, 0, false);
+        add(gunner, new T.SphereGeometry(3, 10, 6, 0, TAU, 0, Math.PI / 2), toon('#3d4a2a'), 0, 6.6, 0, false);
+        const mg = add(gunner, new T.CylinderGeometry(1.4, 1.4, 16, 8), metal, 6, 1, 6, false); mg.rotation.x = Math.PI / 2;
+        const gunTip = new T.Object3D(); gunTip.position.set(6, 1, 15); gunner.add(gunTip);
+        const nav = [glowSprite(g, '#ff2a2a', 14, -16, -4, 4), glowSprite(g, '#2aff6a', 14, 16, -4, 4), glowSprite(g, '#ffffff', 12, 0, 16, -90)];
+        // Ropes (unit height, scaled to the hover altitude) and the soldiers sliding down them.
+        const ropeM = toon('#d8c9a0'), ropes = [], sliders = [];
+        for (const sz of [-8, 8]) {
+          const r = add(scene, new T.CylinderGeometry(0.5, 0.5, 1, 4).translate(0, -0.5, 0), ropeM, 0, 0, 0, false); r.visible = false; ropes.push({ m: r, dz: sz });
+          const sl = new T.Group(); scene.add(sl); sl.visible = false;
+          add(sl, new T.CapsuleGeometry(3, 4.4, 3, 8), crewM, 0, 0, 0, false);
+          add(sl, new T.SphereGeometry(2.7, 10, 8), toon('#f1c38f'), 0, 7, 0, false);
+          add(sl, new T.SphereGeometry(3.1, 10, 6, 0, TAU, 0, Math.PI / 2), toon('#3d4a2a'), 0, 7.6, 0, false);
+          for (const ax of [-1, 1]) add(sl, new T.CapsuleGeometry(1, 3.4, 2, 5), crewM, ax * 2, 7, 0, false);
+          sl.scale.setScalar(2.3); sliders.push({ g: sl, dz: sz });
+        }
+        const wash = new T.Mesh(new T.RingGeometry(0.6, 1, 40).rotateX(-Math.PI / 2), additive('#c8d8ff')); wash.renderOrder = 2; wash.visible = false; scene.add(wash);
+        g.visible = false; g.scale.setScalar(1.3); scene.add(g);
+        return { g, rotor, tailRotor, nav, gunner, gunTip, ropes, sliders, wash, crewM };
+      }
+      // Shield dome: a hex-grid energy shell over the squad (fresnel rim, scrolling hexes, a flash on every block).
+      const domeMat = new T.ShaderMaterial({ transparent: true, depthWrite: false, blending: T.AdditiveBlending, side: T.DoubleSide,
+        uniforms: { uT: { value: 0 }, uA: { value: 0 }, uHit: { value: 0 }, uC: { value: new T.Color('#5ff4ff') } },
+        vertexShader: 'varying vec3 vN; varying vec3 vV; varying vec2 vU; void main(){ vU = uv; vec4 mv = modelViewMatrix * vec4(position, 1.0); vN = normalize(normalMatrix * normal); vV = normalize(-mv.xyz); gl_Position = projectionMatrix * mv; }',
+        fragmentShader: 'uniform float uT; uniform float uA; uniform float uHit; uniform vec3 uC; varying vec3 vN; varying vec3 vV; varying vec2 vU;' +
+          'float hex(vec2 p){ p.x *= 1.1547; p.y += mod(floor(p.x), 2.0) * 0.5; p = abs(fract(p) - 0.5); return abs(max(p.x * 1.5 + p.y, p.y * 2.0) - 1.0); }' +
+          'void main(){ float f = pow(1.0 - abs(dot(vN, vV)), 2.2); float h = smoothstep(0.08, 0.0, hex(vec2(vU.x * 28.0, vU.y * 10.0 - uT * 0.4)));' +
+          ' float band = smoothstep(0.06, 0.0, abs(fract(vU.y * 1.5 - uT * 0.5) - 0.5) - 0.44); float base = smoothstep(0.0, 0.12, vU.y);' +
+          ' float a = (0.05 + f * 0.7 + h * 0.22 + band * 0.18 + uHit * (0.3 + h * 0.6)) * uA * (0.4 + base * 0.6); gl_FragColor = vec4(uC * (1.0 + uHit), a); }' });
+      const dome = new T.Mesh(new T.SphereGeometry(1, 40, 18, 0, TAU, 0, Math.PI / 2), domeMat); dome.visible = false; dome.renderOrder = 5; scene.add(dome);
+      const domeRing = new T.Mesh(new T.RingGeometry(0.92, 1, 56).rotateX(-Math.PI / 2), additive('#5ff4ff')); domeRing.visible = false; domeRing.renderOrder = 5; scene.add(domeRing);
+      let shieldWas = 0;
+      function support(S, info, time, dt) {
+        const q = S.squad, form = info.formation, depth = form.length ? form[form.length - 1].y : 0;
+        // Shield.
+        const on = S.shieldT > 0;
+        dome.visible = domeRing.visible = on;
+        if (on) {
+          const rx = Math.min(6, q.n) * 7 + 26, rz = depth / 2 + 30, cz = SQUAD_Y + depth / 2 - CZ, fade = S.shieldT < 1.2 ? (Math.sin(time * 30) > 0 ? 1 : 0.35) : 1;
+          const pop = Math.min(1, (6 - S.shieldT) / 0.25);
+          dome.position.set(q.x - CX, 0, cz); dome.scale.set(rx * pop, 52 * pop, rz * pop);
+          domeRing.position.set(q.x - CX, 1.2, cz); domeRing.scale.set(rx * pop, 1, rz * pop);
+          domeMat.uniforms.uT.value = time; domeMat.uniforms.uA.value = fade; domeMat.uniforms.uHit.value = S.shieldHit || 0;
+          domeRing.material.opacity = 0.7 * fade;
+          if (!shieldWas) { fx.ring(q.x - CX, 6, cz, '#5ff4ff', 6, 36, '#ffffff'); fx.star(q.x - CX, 40, cz, '#9ff8ff', 12, 0.4); }
+          if ((S.shieldHit || 0) > 0.9 && Math.random() < 0.5) fx.impact(q.x - CX + rnd(-rx, rx) * 0.8, rnd(10, 40), cz - rz * 0.8, '#7df9ff', 0.8);
+        } else if (shieldWas) fx.ring(q.x - CX, 6, SQUAD_Y + depth / 2 - CZ, '#5ff4ff', 4, 20);
+        shieldWas = on ? 1 : 0;
+        // Transport helicopter (one at a time on screen).
+        const h = S.helis[0];
+        if (!h && !transport) return;
+        if (!transport) transport = makeTransport();
+        const T0 = transport;
+        T0.g.visible = !!h;
+        T0.ropes.forEach(r => { r.m.visible = false; }); T0.sliders.forEach(sl => { sl.g.visible = false; }); T0.wash.visible = false;
+        if (!h) return;
+        const alt = h.st === 'in' ? 95 + Math.max(0, 1.3 - h.t) * 160 : h.st === 'out' ? 95 + h.t * h.t * 90 : 95 + Math.sin(time * 2.2) * 3;
+        const hx = h.x - CX, hz = h.y - CZ;
+        T0.g.position.set(hx, alt, hz);
+        T0.g.rotation.set(h.st === 'in' ? 0.25 : h.st === 'out' ? -0.15 : 0.04, 0, Math.sin(time * 1.3) * 0.05);
+        T0.rotor.rotation.y += dt * 32; T0.tailRotor.rotation.x += dt * 40;
+        T0.nav[0].visible = T0.nav[1].visible = Math.sin(time * 6) > -0.3; T0.nav[2].visible = (time * 1.4) % 1 < 0.12;
+        T0.crewM.color.set(info.skin);
+        blob(hx, hz + 20, 120, 90);
+        // Downwash: a pulsing dust ring and puffs on the road under the rotor.
+        if (alt < 160) {
+          T0.wash.visible = true; const k = 60 + 14 * Math.sin(time * 9); T0.wash.position.set(hx, 1.4, hz); T0.wash.scale.set(k, 1, k * 0.8); T0.wash.material.opacity = 0.35;
+          if (Math.random() < dt * 14) { const a = Math.random() * TAU; puff(hx + Math.cos(a) * 60, 3, hz + Math.sin(a) * 45, 7, 0.8, SMOKE_M, 4); }
+        }
+        if (h.st === 'hover') {
+          // Two ropes from the door to the road; a soldier slides down each, over and over while troops drop.
+          for (const r of T0.ropes) { r.m.visible = true; r.m.position.set(hx + 20, alt - 8, hz + r.dz); r.m.scale.set(1, alt - 8, 1); }
+          if (h.left > 0) T0.sliders.forEach((sl, i) => { const u = (h.t * 2.6 + i * 0.5) % 1; sl.g.visible = true; sl.g.position.set(hx + 20, (alt - 18) * (1 - u) + 2, hz + sl.dz); });
+          T0.gunner.rotation.y = Math.sin(time * 3) * 0.3;
+        }
       }
 
       // Skin portrait (scripts/suru-skin-art.html bakes the shop art with it): one soldier, 3/4 view, studio light.
@@ -705,7 +961,7 @@
           waterMat.color.set(th.sea || '#3aa0e8').lerp(new T.Color('#0e1440'), 0.62); waterMat.emissive.set('#140c3a');
           scene.fog.color.set('#2a1a52');
           const castle = makeCastle(root);
-          const bosses = { kale: castle, dev: makeDev(root), tank: makeTank(root), heli: makeHeli(root) };
+          const bosses = { kale: castle, dev: makeDev(root), tank: makeTank(root), heli: makeHeli(root), ejder: makeDragon(root) };
           scene.add(root);
           puffs.length = 0; prevBullets = []; fx.clear();
           level = { root, castle, bosses, gates: new Map(), crates: new Map(), S };
@@ -720,7 +976,7 @@
           camera.aspect = W / H; camera.updateProjectionMatrix();
           const sa = window.UI && UI.safeArea ? UI.safeArea() : { hudBottom: 90, bottom: 0 };
           const top = sa.hudBottom + 4, bottom = H - sa.bottom - 10, availH = Math.max(100, bottom - top);
-          const pts = [[20, 40, 0], [380, 40, 0], [20, 700, 0], [380, 700, 0], [288, 110, 150]].map(([x, y, h]) => new T.Vector3(x - CX, h, y - CZ));
+          const pts = [[20, 40, 0], [380, 40, 0], [20, 715, 0], [380, 715, 0], [288, 110, 150]].map(([x, y, h]) => new T.Vector3(x - CX, h, y - CZ));
           const pitch = 33 * Math.PI / 180;
           let d = 900; camTarget.set(0, 0, 0);
           for (let it = 0; it < 30; it++) {
@@ -750,7 +1006,7 @@
         render(S, dt, info) {
           if (!level || level.S !== S) return;
           const L = level, t = S.t, C = S.castle, time = performance.now() / 1000;
-          nBlob = 0;
+          nBlob = 0; nZone = 0; nmkZ = 0;
           // Adaptive quality: drop the resolution if the phone cannot keep up.
           perf.acc += dt; perf.n++;
           if (perf.acc > 2.5) {
@@ -841,21 +1097,74 @@
           for (const [id, m] of L.crates) if (!seenC.has(id)) { L.root.remove(m.g); m.g.traverse(o => { if (o.geometry) o.geometry.dispose(); }); L.crates.delete(id); }
 
           // Boss (fortress, giant, tank or helicopter).
-          for (const k in L.bosses) L.bosses[k].g.visible = !!(C && !C.dead && C.type === k);
+          // A boss that just fell keeps standing for its death sequence (renderer-only: the game has already ended).
+          if (C && C.dead && !L.dying && L.bosses[C.type]) L.dying = { t: 0, K: L.bosses[C.type], type: C.type, x: C.x - CX, z: C.y - CZ, boomT: 0, y0: L.bosses[C.type].g.position.y, final: false };
+          for (const k in L.bosses) L.bosses[k].g.visible = !!(C && !C.dead && C.type === k) || !!(L.dying && L.dying.type === k && L.dying.t < 1.35);
           if (!C || C.dead) L.bosses.heli.spot.visible = false;
           const K = C ? L.bosses[C.type] || L.castle : L.castle;
+          if (L.dying) dyingBoss(L.dying, dt);
           if (C && !C.dead) {
             K.g.position.set(C.x - CX, 0, C.y - CZ);
-            if (C.type === 'kale') { K.g.scale.setScalar(C.w / 150); blob(C.x - CX + 8, C.y - CZ + 14, C.w * 1.35, 90); }
-            else if (C.type === 'dev') {
-              K.g.scale.setScalar(1); blob(C.x - CX, C.y - CZ, 70, 50);
-              K.g.position.y = Math.abs(Math.sin(time * 4)) * 3;
-              K.arm.rotation.x = C.hitT < 0.4 ? -1.6 + C.hitT * 4 : Math.sin(time * 2) * 0.2;
+            // Entrance: each boss arrives in its own way during its first ~1.4 s (the game holds its attacks anyway
+            // while it is still moving in). in = 0 -> 1.
+            const inK = Math.min(1, C.t / 1.4), inE = 1 - Math.pow(1 - inK, 3);
+            if (!K.entered && inK >= 1) { K.entered = true; }
+            if (C.type === 'kale') {
+              K.g.scale.setScalar(C.w / 150); blob(C.x - CX + 8, C.y - CZ + 14, C.w * 1.35, 90);
+              // Rises out of the ground in a cloud of dust and stone.
+              K.g.position.y = -(1 - inE) * 150;
+              if (inK < 1 && Math.random() < dt * 22) { fx.chips(C.x - CX + rnd(-70, 70), C.y - CZ + rnd(10, 30), 2, '#6a6070', 1); puff(C.x - CX + rnd(-80, 80), 4, C.y - CZ + 26, 14, 1.4, SMOKE_L, 20); }
+            } else if (C.type === 'dev') {
+              K.g.scale.setScalar(1.15); blob(C.x - CX, C.y - CZ, 90, 64);
+              // Drops from the sky and lands with a quake; then stomps toward the squad.
+              const drop = C.t < 0.9 ? Math.pow(1 - C.t / 0.9, 2) * 420 : 0;
+              K.g.position.y = drop + (C.t >= 0.9 ? Math.abs(Math.sin(time * 4)) * 3 : 0);
+              if (C.t >= 0.9 && !K.landed) { K.landed = true; landing(C.x - CX, C.y - CZ, 70); }
+              const walk = C.y < C.stopY ? Math.sin(time * 4) * 0.45 : 0;
+              K.legs[0].rotation.x = walk; K.legs[1].rotation.x = -walk;
+              // Wind-up telegraph: the hammer rises while a red zone fills on the road, then the smash.
+              const wind = C.y >= C.stopY - 4 ? C.hitT : 9;
+              K.arm.rotation.x = wind < 0.25 ? -2.4 + (0.25 - wind) * 10 : wind < 0.9 ? -2.4 * (0.9 - wind) / 0.65 : Math.sin(time * 2) * 0.2;
+              K.armL.rotation.x = Math.sin(time * 2 + 1) * 0.25;
+              if (wind < 0.9) zone(C.x - CX, C.y - CZ + 30, 90, 1 - wind / 0.9, true);
+              if (K.lastHit != null && C.hitT > K.lastHit + 0.5) { landing(C.x - CX, C.y - CZ + 30, 90); const hp = K.head.getWorldPosition(v3); fx.explosion(hp.x, 4, hp.z + 20, 14, { n: 14, rocks: 8, shake: 0, rockCol: '#5a5060' }); }
+              K.lastHit = C.hitT;
+              const pulse = 0.5 + 0.5 * Math.sin(time * 5);
+              K.core.scale.setScalar(32 + pulse * 14); K.rune.scale.setScalar(22 + pulse * 8 + (wind < 0.9 ? 20 : 0));
+              K.eyes.forEach(e => e.scale.setScalar(14 + pulse * 6));
             } else if (C.type === 'tank') {
               K.g.scale.setScalar(1); blob(C.x - CX, C.y - CZ, 120, 140);
               K.turret.rotation.y = Math.atan2(S.squad.x - C.x, SQUAD_Y - C.y) * 0.9;
+              // Wheels turn with the sweep; dust kicks up behind the tracks while it moves.
+              const dx = K.lastX == null ? 0 : C.x - K.lastX; K.lastX = C.x;
+              K.wheels.forEach(w => { w.rotation.x += (dx + (C.arrived ? 0 : SCROLL_V * dt)) * 0.12; });
+              if ((Math.abs(dx) > 0.3 || !C.arrived) && Math.random() < dt * 14) for (const sx of [-1, 1]) puff(C.x - CX + sx * 46, 4, C.y - CZ - 58, 6, 0.9, SMOKE_L, 8);
+              K.visor.scale.setScalar(40 + 8 * Math.sin(time * 6));
+              K.barrels.forEach(b => { b.position.z += (50 - b.position.z) * Math.min(1, dt * 6); syncInk(b); });
+            } else if (C.type === 'ejder') {
+              K.g.scale.setScalar(1.6);
+              const fly = 115 + Math.sin(time * 2.2) * 8 + (1 - inE) * 280;
+              K.g.position.y = fly;
+              K.g.rotation.z = Math.max(-0.35, Math.min(0.35, Math.cos(C.t * 0.38) * -0.3));
+              blob(C.x - CX, C.y - CZ, 170, 120);
+              // Wings flap (faster while climbing in), tail and neck sway, the head tracks the squad.
+              const flap = Math.sin(time * (inK < 1 ? 9 : 5.5));
+              K.wings.forEach(({ w, sx }) => { w.rotation.z = sx * (0.05 + flap * 0.38); w.rotation.x = 0.15 + flap * 0.06; }); // shallow flap: the membranes stay readable from the high camera
+              K.tail.forEach((t0, k) => { t0.position.x = Math.sin(time * 2.4 - k * 0.6) * (k * 2.4); syncInk(t0); });
+              K.tipSpike.position.x = Math.sin(time * 2.4 - 6 * 0.6) * 15;
+              K.neck.forEach((n0, k) => { n0.position.x = Math.sin(time * 1.6 + k * 0.5) * k * 0.8; syncInk(n0); });
+              K.head.rotation.y = Math.max(-0.6, Math.min(0.6, (S.squad.x - C.x) * 0.006)); K.head.rotation.x = 0.35;
+              // Breath: the jaw opens and the throat glows just before fireballs leave.
+              K.breathT = Math.max(0, K.breathT - dt);
+              K.jaw.rotation.x = K.breathT > 0 ? 0.6 : 0.08 + 0.05 * Math.sin(time * 3);
+              K.mouth.visible = K.breathT > 0; if (K.breathT > 0) K.mouth.scale.setScalar(26 + 10 * Math.sin(time * 30));
+              K.bellyGlow.material.opacity = 0.55 + 0.25 * Math.sin(time * 4) + K.breathT;
+              K.aura.material.opacity = 0.3 + 0.1 * Math.sin(time * 2);
+              K.eyes.forEach(e => e.scale.setScalar(12 + 4 * Math.sin(time * 7)));
+              if (Math.random() < dt * 10) { const mp = K.mouthTip.getWorldPosition(v3); fx.mote(mp.x, mp.y, mp.z, Math.random() < 0.5 ? '#ff9a3a' : '#ffd23f', 1, 0.8, 10); }
+              if (inK < 1 && !K.roared && inK > 0.85) { K.roared = true; K.breathT = 0.6; const mp = K.mouthTip.getWorldPosition(v3); fx.shower(mp.x, mp.y, mp.z, 0, 1, '#ff8a2a', 16); }
             } else {
-              K.g.scale.setScalar(1.4); K.g.position.y = 120 + Math.sin(time * 2) * 5;
+              K.g.scale.setScalar(1.4); K.g.position.y = 120 + Math.sin(time * 2) * 5 + (1 - inE) * 240;
               K.g.rotation.z = Math.max(-0.3, Math.min(0.3, (S.squad.x - C.x) * -0.004)); K.g.rotation.x = 0.08 + Math.sin(time * 1.3) * 0.03;
               K.rotor.rotation.y += dt * 30; K.tailRotor.rotation.x += dt * 40;
               K.spin = Math.max(0, K.spin - dt * 2); K.barrels.forEach(b => { b.rotation.z += dt * (4 + K.spin * 40); });
@@ -880,7 +1189,9 @@
             for (const sh of S.shells) if (sh.foe && !seenFx.has(sh)) {
               seenFx.add(sh);
               let mx = sh.x0 - CX, my = 40, mz = sh.y0 - CZ;
-              const gun = C.type === 'tank' ? K.tip : C.type === 'kale' ? K.tips[sh.x0 < C.x ? 0 : 1] : C.type === 'heli' ? K.guns[sh.x0 < C.x ? 0 : 1] : null;
+              const gun = C.type === 'tank' ? K.tip : C.type === 'kale' ? K.tips[sh.x0 < C.x ? 0 : 1] : C.type === 'heli' ? K.guns[sh.x0 < C.x ? 0 : 1] : C.type === 'ejder' ? K.mouthTip : null;
+              if (C.type === 'ejder') K.breathT = 0.7;
+              if (C.type === 'tank') K.barrels.forEach(b => { b.position.z = 42; });
               if (gun) { const gp = gun.getWorldPosition(v3); mx = gp.x; my = gp.y; mz = gp.z; }
               fx.muzzle(mx, my, mz, (sh.x1 - sh.x0) * 0.2, sh.y1 - sh.y0, '#ff9a3a', 2.2); fx.shower(mx, my, mz, 0, 1, '#ffb040', 8);
               for (let k = 0; k < 4; k++) puff(mx, my, mz + 6, 6, 0.9, SMOKE_M, 10);
@@ -890,6 +1201,13 @@
               if (C.type === 'heli') K.spin = 1;
             }
             K.wallMat.emissive.setRGB(C.flash * 0.35, C.flash * 0.15, C.flash * 0.1);
+            // Hits on the boss: sparks and chips bursting off its surface (throttled), bigger for rockets/lasers.
+            if (C.flash > 0.9 && (K.hitFx = (K.hitFx || 0) - dt) <= 0) {
+              K.hitFx = 0.07;
+              const hy = { kale: 50, dev: 70, tank: 30, heli: K.g.position.y, ejder: K.g.position.y }[C.type];
+              const hx = C.x - CX + rnd(-0.4, 0.4) * C.w, hz = C.y - CZ + rnd(10, 30);
+              fx.impact(hx, hy + rnd(-12, 12), hz, C.type === 'ejder' ? '#ffb04a' : '#ffe08a', 0.9, Math.random() < 0.5 ? 2 : 0, C.type === 'ejder' ? '#7a1020' : '#5a5f68');
+            }
             K.towers.forEach((tw, k) => { tw.flag.rotation.y = Math.sin(time * 3 + k) * 0.35; });
             // Damaged fortress smokes.
             const dmg = 1 - C.hp / C.max;
@@ -901,7 +1219,7 @@
 
           // Soldiers.
           const q = S.squad, gun = GUNS[info.weapon.gun || 0];
-          const form = info.formation, dir = -1, s = 1.75;
+          const form = info.formation, dir = -1, s = 2.3; // V2: soldiers drawn ~30% bigger (players found them tiny)
           const bodyC = C_(q.flash > 0 ? '#ffffff' : info.skin), helmC = C_(info.skin).multiplyScalar(0.55);
           const isTube = gun[0] === 'tube', gm = isTube ? gunTube : gunBox;
           gunBox.material.color.set(gun[4]); gunTube.material.color.set(gun[4]);
@@ -959,7 +1277,7 @@
           const foeC = C_('#e0353d'), bruteC = C_('#7d1624'), hitC = C_('#ffd0d5'), foeHelm = C_('#2a1216');
           const KIND_C = { runner: C_('#ff8a2a'), sniper: C_('#6d1a24'), shield: C_('#b02a4a'), bomber: C_('#2a2a2a') };
           for (let i = 0; i < S.enemies.length && ne2 < MAX_E; i++) {
-            const e = S.enemies[i], sc = e.brute ? 2.9 : 1.65, x = e.x - CX, z = e.y - CZ, ph = time * 16 + i * 1.3, sw = Math.sin(ph) * 0.8;
+            const e = S.enemies[i], sc = e.brute ? 3.5 : 2.05, x = e.x - CX, z = e.y - CZ, ph = time * 16 + i * 1.3, sw = Math.sin(ph) * 0.8;
             const bob = Math.abs(Math.sin(ph)) * 1;
             blob(x, z, 10 * sc, 8 * sc);
             const tc = e.flash > 0 ? hitC : e.brute ? bruteC : KIND_C[e.kind] || foeC;
@@ -1014,9 +1332,10 @@
           for (const b of prevBullets) if (b.dead && b.y > -55 && b.kind !== 'rocket' && nImp++ < 10) fx.impact(b.x - CX, 14, b.y - CZ, wc, b.kind === 'laser' ? 0.45 : 0.55, Math.random() < 0.3 ? 1 : 0, '#4a4256');
           prevBullets = S.bullets;
           for (const b of S.bullets) {
-            const x = b.x - CX, z = b.y - CZ, y = 15.5;
+            // Door-gunner rounds from the support helicopter start up at the door and dip toward the road.
+            const x = b.x - CX, z = b.y - CZ, y = b.heli ? 15.5 + 80 * Math.max(0, 1 - (b.y0 - b.y) / 150) : 15.5;
             // A new bullet: muzzle flash where that soldier stands (the volley comes from the whole squad).
-            if (!seenB.has(b)) { seenB.add(b); if (nMz++ < 14) fx.muzzle(x, y, z, b.vx, -b.speed, wc, b.kind === 'rocket' ? 1.2 : b.kind === 'pellet' ? 0.85 : 0.75); }
+            if (!seenB.has(b)) { seenB.add(b); if (b.heli) fx.muzzle(x, y, z, b.vx, -b.speed, '#ffd27a', 0.9); else if (nMz++ < 14) fx.muzzle(x, y, z, b.vx, -b.speed, wc, b.kind === 'rocket' ? 1.2 : b.kind === 'pellet' ? 0.85 : 0.75); }
             if (b.kind === 'rocket') {
               if (nr2 < 200) put(rockets, nr2++, x, y, z, 1.7, 1.7, 9);
               if (nfire < MAX_FX) put(fire, nfire++, x, y, z + 6.5, 2.2, 2.2, 4 + Math.random() * 3, 0, 0, 0, FIRE_B);
@@ -1027,16 +1346,39 @@
               put(tracers, nb, x, y, z, w, w, L, 0, a, 0); put(tracerCore, nb++, x, y, z, w * 0.3, w * 0.3, L * 0.8, 0, a, 0);
             }
           }
-          done(tracers, nb); done(tracerCore, nb); done(rockets, nr2);
+          done(tracers, nb); done(tracerCore, nb);
           // Mortar shells with smoke trail + landing markers.
           let nsh = 0, nmk = 0;
           for (const sh of S.shells) {
-            const ss = sh.foe ? 5 : 3.2;
-            put(shells, nsh++, sh.x - CX, sh.h + 4, sh.y - CZ, ss, ss, ss);
-            if (Math.random() < 0.4) puff(sh.x - CX, sh.h + 4, sh.y - CZ, 2.4, 0.8, SMOKE_S, 4);
-            const k = 10 + 26 * (1 - sh.u) + Math.sin(time * 18) * 2;
-            put(markers, nmk++, sh.x1 - CX, 1.2, sh.y1 - CZ, sh.foe ? k * 1.6 : k, 1, sh.foe ? k * 1.6 : k, 0, 0, 0, sh.foe ? MK_FOE : MK_OWN);
+            if (sh.u < 0) continue; // a queued fireball of the drake's fan
+            const ss = sh.foe ? 5 : 3.2, sx0 = sh.x - CX, sy0 = sh.h + 4, sz0 = sh.y - CZ;
+            if (sh.fire) {
+              // Drake fireball: a burning core with a fire-and-smoke trail.
+              if (nfire < MAX_FX) put(fire, nfire++, sx0, sy0, sz0, 7, 7, 7, 0, 0, 0, FIRE_A);
+              if (nfire < MAX_FX) put(fire, nfire++, sx0, sy0, sz0, 4, 4, 4, 0, 0, 0, WHITE);
+              fx.trail(sx0, sy0, sz0, Math.random() < 0.5 ? '#ff7a1a' : '#ffd23f', 2.2, 0.35);
+              if (Math.random() < 0.5) puff(sx0, sy0, sz0, 4, 0.7, C_('#4a3a36'), 6);
+            } else {
+              put(shells, nsh++, sx0, sy0, sz0, ss, ss, ss);
+              if (Math.random() < 0.4) puff(sx0, sy0, sz0, 2.4, 0.8, SMOKE_S, 4);
+            }
+            if (sh.foe) zone(sh.x1 - CX, sh.y1 - CZ, sh.fire ? 52 : 58, sh.u, true);
+            else { const k = 10 + 26 * (1 - sh.u) + Math.sin(time * 18) * 2; put(markers, nmk++, sh.x1 - CX, 1.2, sh.y1 - CZ, k, 1, k, 0, 0, 0, MK_OWN); }
           }
+          // Missile strike: missiles dive on a slant with a bright exhaust and smoke; yellow target zones on the road.
+          let nmsl = 0;
+          for (const m of S.missiles) {
+            zone(m.tx - CX, m.ty - CZ, 50, m.delay > 0 ? 0.05 : m.u, false);
+            if (m.delay > 0) continue;
+            const mx = m.x - CX, my = m.h + 6, mz = m.y - CZ, dx = m.tx - m.x0, dz = m.ty - m.y0, len = Math.hypot(dx, 520, dz);
+            dummy.position.set(mx, my, mz); dummy.quaternion.setFromUnitVectors(v3.set(0, 0, 1), new T.Vector3(dx / len, -520 / len, dz / len)); dummy.scale.set(2.4, 2.4, 14); dummy.updateMatrix();
+            if (nr2 < 200) rockets.setMatrixAt(nr2++, dummy.matrix);
+            const bx = mx - dx / len * 9, by = my + 520 / len * 9, bz = mz - dz / len * 9;
+            if (nfire < MAX_FX) put(fire, nfire++, bx, by, bz, 3, 3, 3, 0, 0, 0, FIRE_A);
+            fx.trail(bx, by, bz, '#ffb04a', 2, 0.3); if (Math.random() < 0.6) puff(bx, by, bz, 4, 1.1, SMOKE_L, 2);
+            nmsl++;
+          }
+          done(rockets, nr2);
           done(shells, nsh);
           // Bombers.
           planes.forEach((p, i) => {
@@ -1090,6 +1432,11 @@
             const st = f.life * (f.big ? 2 : 1);
             if (st > strongest) { strongest = st; bx = x; bz = z; }
           }
+          for (let i = ringFx.length - 1; i >= 0; i--) {
+            const r0 = ringFx[i]; r0.t += dt;
+            const u = r0.t / 0.6; if (u >= 1) { ringFx.splice(i, 1); continue; }
+            if (nring < 60) put(rings, nring++, r0.x, 1.6, r0.z, r0.r * (0.3 + u), 1, r0.r * (0.3 + u), 0, 0, 0, tmpC.copy(r0.c).multiplyScalar(1 - u));
+          }
           done(rings, nring);
           boomLight.intensity = strongest * 6; boomLight.position.set(bx, 40, bz);
           // Particles from the game (hit sparks, kills): handed to the GPU system once, when they appear.
@@ -1111,6 +1458,11 @@
           camX += ((S.squad.x - CX) * 0.1 - camX) * Math.min(1, dt * 3);
           camera.position.copy(camBase); camera.position.x += camX; if (info.playing) camera.position.y += Math.sin(time * 7) * 0.6;
           if (S.shake) camera.position.add(v3.set((Math.random() - 0.5) * S.shake, (Math.random() - 0.5) * S.shake, 0));
+          // Renderer-side kicks (boss landing / death) on top of the game's shake.
+          camKick = Math.max(0, camKick - dt * 30);
+          if (camKick) camera.position.add(v3.set((Math.random() - 0.5) * camKick, (Math.random() - 0.5) * camKick, 0));
+          done(zones, nZone); done(zoneRims, nmkZ);
+          support(S, info, time, dt);
           renderer.render(scene, camera);
         },
       };

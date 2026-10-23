@@ -10,6 +10,18 @@
   .prog { height: 8px; margin: 6px 40px 0; border-radius: 99px; background: rgba(0,0,0,.4); border: 2px solid rgba(255,255,255,.2); overflow: hidden; }
   /* Soft cinematic vignette over the 3D view (between the 3D canvas and the label canvas, never takes touches). */
   .vign { position: fixed; inset: 0; pointer-events: none; background: radial-gradient(ellipse 85% 75% at 50% 55%, transparent 50%, rgba(8,4,28,.55) 100%); }
+  /* Support ability buttons: icon + cooldown ring (conic gradient driven by --f) + label. */
+  .supbar { position: fixed; left: 0; right: 0; bottom: calc(env(safe-area-inset-bottom, 0px) + 10px); display: flex; justify-content: center; gap: 14px; pointer-events: none; z-index: 5; }
+  .sup { pointer-events: auto; position: relative; width: 64px; height: 64px; border-radius: 50%; border: 0; padding: 0; font-size: 28px; color: #fff;
+    background: conic-gradient(#7df9ff var(--f, 0%), rgba(255,255,255,.14) 0); box-shadow: 0 4px 0 rgba(0,0,0,.35); filter: saturate(.6) brightness(.8); touch-action: none; }
+  .sup::before { content: ''; position: absolute; inset: 5px; border-radius: 50%; background: radial-gradient(circle at 50% 35%, #3a3170, #15113a); z-index: -0; }
+  .sup > b { position: relative; display: block; line-height: 64px; }
+  .sup > i { position: absolute; left: 50%; top: 100%; transform: translate(-50%, -6px); white-space: nowrap; font: 800 11px 'Baloo', system-ui, sans-serif; font-style: normal;
+    background: rgba(15,10,40,.85); padding: 1px 7px; border-radius: 99px; }
+  .sup.ready { filter: none; background: conic-gradient(#ffd23f 100%, transparent 0); animation: supPulse 1.1s ease-in-out infinite; }
+  .sup.act { filter: none; background: conic-gradient(#3be07a 100%, transparent 0); }
+  .sup.lock { filter: grayscale(1) brightness(.6); }
+  @keyframes supPulse { 50% { transform: scale(1.08); box-shadow: 0 0 18px #ffd23f, 0 4px 0 rgba(0,0,0,.35); } }
   .prog > i { display: block; height: 100%; width: 0; background: linear-gradient(90deg, #3be07a, #ffd23f, #ff4757); }
 </style>
 </head>
@@ -27,6 +39,12 @@
   </div>
   <div class="hud-row" style="justify-content:center;margin-top:6px"><span class="pill" id="hp">🪖 5</span></div>
   <div class="prog"><i id="prog"></i></div>
+</div>
+
+<div class="supbar" id="sup" style="display:none">
+  <button class="sup" data-sup="heli"><b>🚁</b><i></i></button>
+  <button class="sup" data-sup="strike"><b>🚀</b><i></i></button>
+  <button class="sup" data-sup="shield"><b>🛡️</b><i></i></button>
 </div>
 
 <div class="overlay hidden" id="ov"></div>

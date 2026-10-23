@@ -1,7 +1,7 @@
 // Visual benchmark: 1080x1920 screenshots + per-frame render cost under 4x CPU throttling (headless Chromium,
 // WebGL through SwiftShader). Serves the repo itself on a free port.
 // Usage: NODE_PATH=$(npm root -g) node scripts/visual-bench.cjs <outDir> <tag> [scene,...]
-// Scenes: suru-run, suru-boss, arrow-play, arrow-boss. Prints one JSON line per scene.
+// Scenes: suru-run, suru-boss, suru-wave, suru-giant, suru-tank, suru-dragon, suru-support, arrow-play, arrow-boss (+ arrow-* below). Prints one JSON line per scene.
 'use strict';
 const http = require('http'), fs = require('fs'), path = require('path');
 const { chromium } = require('playwright');
@@ -15,10 +15,23 @@ const SCENES = {
   'suru-run': { url: 'suru-seli/index.html#demo:6:150:big,mortar,weapon=2', lang: 'tr' },
   // Level 4 = helicopter boss, fully arrived and fighting.
   'suru-boss': { url: 'suru-seli/index.html#demo:4:260:big,boss,weapon=2', lang: 'tr' },
+  // V2: a dense enemy wave on the road, every boss model, and the support abilities in action.
+  'suru-wave': { url: 'suru-seli/index.html#demo:12:200:big,weapon=2', lang: 'tr' },
+  'suru-giant': { url: 'suru-seli/index.html#demo:2:300:big,boss,weapon=2', lang: 'tr' },
+  'suru-tank': { url: 'suru-seli/index.html#demo:3:140:big,boss,weapon=2', lang: 'tr' },
+  'suru-dragon': { url: 'suru-seli/index.html#demo:5:150:big,boss,weapon=2', lang: 'tr' },
+  'suru-support': { url: 'suru-seli/index.html#demo:8:160:big,weapon=2,heli,shield', lang: 'tr' },
   // A normal fight room a couple of seconds in (bot-driven hero, enemies up, arrows in flight).
   'arrow-play': { url: 'arrow-legends/index.html#play', lang: 'tr', js: 'const A=window.__arrow; A.run(1, 1); A.S.auto=true; A.step(50);' },
   // Chapter 1 boss room (the bot is fast-forwarded through the earlier rooms).
   'arrow-boss': { url: 'arrow-legends/index.html#play', lang: 'tr', js: 'const A=window.__arrow; A.run(1, 9); A.S.auto=true; A.step(60);' },
+  // V2: the mage (charge, orbs, nova, meteor) against necromancers; chapter-2 creatures; the ice arrow; a mage skill set;
+  // the chapter-4 boss (Magma Dragon) and the chapter-1 guardian intro (telegraphs).
+  'arrow-wizard': { url: 'arrow-legends/index.html#play', lang: 'tr', js: 'const A=window.__arrow; A.G.hero=\'mage\'; A.run(1, 2); Object.assign(A.S.skills,{nova:2,meteor:1}); A.spawn(\'necro\',6,-6); A.spawn(\'necro\',-6,-9); A.S.auto=true; A.step(46);' },
+  'arrow-creatures': { url: 'arrow-legends/index.html#play', lang: 'tr', js: '(async()=>{LD await ld(2); const A=window.__arrow; A.run(2, 3); A.S.auto=true; A.step(24);})()'.replace('LD', 'const ld=n=>new Promise(r=>{if((ARROW_CHARS.loaded||{})[n])return r();const s=document.createElement(\'script\');s.src=\'chars-\'+n+\'.js\';s.onload=s.onerror=r;document.head.appendChild(s)});') },
+  'arrow-ice': { url: 'arrow-legends/index.html#play', lang: 'tr', js: 'const A=window.__arrow; A.run(1, 3); Object.assign(A.S.skills,{ice:1,front:2,multi:1,spd:2}); A.S.auto=true; A.step(44);' },
+  'arrow-skills': { url: 'arrow-legends/index.html#play', lang: 'tr', js: 'const A=window.__arrow; A.G.hero=\'mage\'; A.run(1, 3); Object.assign(A.S.skills,{orbit:2,frostaura:2,shield:1,poison:2,fire:1,hp:1,wisdom:1}); A.S.auto=true; A.step(44);' },
+  'arrow-boss4': { url: 'arrow-legends/index.html#play', lang: 'tr', js: '(async()=>{LD await ld(4); await ld(7); const A=window.__arrow; A.run(4, 39); A.S.auto=true; A.step(70);})()'.replace('LD', 'const ld=n=>new Promise(r=>{if((ARROW_CHARS.loaded||{})[n])return r();const s=document.createElement(\'script\');s.src=\'chars-\'+n+\'.js\';s.onload=s.onerror=r;document.head.appendChild(s)});') },
 };
 
 function serve() {

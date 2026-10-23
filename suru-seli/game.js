@@ -53,6 +53,12 @@
     { name: L('Laser', 'Lazer'), icon: '⚡', dmg: 2.4, rate: 0.1, spread: 1, speed: 900, color: '#7df9ff', pierce: true, kind: 'laser', gun: 5 },
   ];
   const CRATE_ICON = { mortar: '💣', air: '✈️', troops: '🪖' };
+  // Support abilities: free to use (no ads), recharge over time, unlocked by level.
+  const SUP = {
+    heli: { icon: '🚁', name: L('Reinforcements', 'Takviye'), cd: 28, first: 8, lv: 1 },
+    strike: { icon: '🚀', name: L('Missile Strike', 'Füze Yağmuru'), cd: 22, first: 12, lv: 2 },
+    shield: { icon: '🛡️', name: L('Shield', 'Kalkan'), cd: 26, first: 15, lv: 3 },
+  };
 
   const W = 400, H = 720, TAU = Math.PI * 2;
   const SQUAD_Y = 610, ROAD_L = 24, ROAD_R = 376, MID = 200, SCROLL = 70, CASTLE_Y = 110;
@@ -120,15 +126,16 @@
   // End-of-road bosses rotate every level.
   const BOSSES = {
     kale: { name: L('Enemy Castle', 'Düşman Kalesi'), icon: '🏰', sub: L('Dodge its cannons, bring it down!', 'Toplarından kaç, kaleyi yık!'), hp: 1, w: 150 },
-    dev: { name: L('Giant', 'Dev'), icon: '👹', sub: L('Walking at you — drop it before it gets close!', 'Sana doğru yürüyor — yaklaşmadan indir!'), hp: 0.75, w: 64 },
+    dev: { name: L('Armored Giant', 'Zırhlı Dev'), icon: '👹', sub: L('Walking at you — drop it before it gets close!', 'Sana doğru yürüyor — yaklaşmadan indir!'), hp: 0.75, w: 64 },
     tank: { name: L('Armored Tank', 'Zırhlı Tank'), icon: '🛡️', sub: L('Armored: rockets, mortars and lasers hit harder', 'Zırhlı: roket, havan ve lazer daha etkili'), hp: 0.8, w: 104 },
     heli: { name: L('Gunship', 'Savaş Helikopteri'), icon: '🚁', sub: L('It chases you — keep moving!', 'Peşinden geliyor — sürekli hareket et!'), hp: 0.6, w: 92 },
+    ejder: { name: L('Fire Drake', 'Ateş Ejderi'), icon: '🐉', sub: L('Watch the red marks — its fire rains down there!', 'Kırmızı izlere dikkat — ateşi oraya yağıyor!'), hp: 0.7, w: 110 },
   };
   // Difficulty level: the real level up to 80, then growing at 20% speed. Past ~100 the uncapped formulas (negative
   // gates, enemy hits, castle HP) outgrew any upgrade path: the 40-day sim hit a 17-loss wall at level 127.
   // Upgrades cost 1.6x per level, so a long-time player sits around upgrade 10-12: difficulty has to flatten too.
   const diffLv = lv => lv <= 80 ? lv : 80 + (lv - 80) * 0.2;
-  const bossOf = lv => ['kale', 'dev', 'tank', 'heli'][(lv - 1) % 4];
+  const bossOf = lv => ['kale', 'dev', 'tank', 'heli', 'ejder'][(lv - 1) % 5];
   function modsOf(lv) {
     if (lv < 3) return [];
     const r = rng(lv * 3571 + 7), keys = Object.keys(MODS).filter(k => lv >= 5 || k !== 'mines');
@@ -164,9 +171,12 @@
       first = false;
     }
     // Enemy flood: packs only ever run down enemy lanes.
-    const packGap = Math.max(1.25, 2.1 - lv * 0.015) * (has('swarm') ? 0.7 : 1);
+    // V2: the flood is a real crowd now (players found it too thin): ~1.8x the soldiers per pack, packs a little
+    // closer together. Grunts stay one-hit-ish early on, so a growing squad mows through the blob instead of stalling.
+    const packGap = Math.max(1.1, 1.85 - lv * 0.013) * (has('swarm') ? 0.75 : 1);
     for (let t = 3; t < length; t += packGap * (0.8 + r() * 0.4) * (1 + e)) {
-      const cnt = Math.round((2 + Math.min(6, lv / 4) + r() * 2) * (1 - e * 0.6) * (has('swarm') ? 1.25 : 1));
+      // The first ~20 s ramp up from half size: a fresh squad gets to grow on the reward lane before the full flood.
+      const cnt = Math.round((4 + Math.min(8, lv / 3.2) + r() * 3) * (1 - e * 0.6) * (has('swarm') ? 1.25 : 1) * Math.min(1, 0.5 + t / 40));
       events.push({ t, kind: 'pack', cnt, brute: lv >= 3 && r() < Math.min(0.35, 0.08 + lv * 0.01), pick: r() });
     }
     // Snipers take position up the enemy lane and shoot at the squad: parking in the reward lane is not safe.
@@ -191,6 +201,9 @@
       mortars: [], shells: [], planes: [], bombs: [], fx: [], banner: null,
       fireT: 0, fireFlash: 0, shake: 0, reviveUsed: false, lostTotal: 0, rT: 2, cT: 7,
       airT: upgLv('air') ? airEvery(upgLv('air')) * 0.6 : Infinity,
+      // Support abilities (buttons under the road): reinforcement helicopter, missile strike, shield dome.
+      // `cd` counts down to ready; the first use of each comes early in the level.
+      sup: Object.fromEntries(Object.keys(SUP).map(k => [k, { cd: SUP[k].first }])), helis: [], missiles: [], shieldT: 0,
       castleHp: Math.round((500 + 260 * Math.min(lv, 40) + 90 * Math.max(0, dl - 40)) * (1 - e * 0.7) * BOSSES[boss].hp),
     };
     if (R3) R3.setLevel(S, { skin: skinColor() });
@@ -235,12 +248,16 @@
     const q = S.squad;
     loss = Math.min(q.n, loss);
     if (loss <= 0) return;
+    if (S.shieldT > 0) { S.shieldHit = 1; if (Math.random() < 0.4) floatText(q.x + (Math.random() - 0.5) * 40, SQUAD_Y - 40, L('BLOCK', 'BLOK'), '#7df9ff'); return; }
     q.n -= loss; S.lostTotal += loss; q.flash = 1; S.shake = Math.max(S.shake, 5);
     floatText(q.x, SQUAD_Y - 50, '-' + loss, '#ff8a95');
     burst(x, y, skinColor(), 6, 90); Sfx.play('hit'); UI.vibrate(30);
   }
   function spawnGate(lane, val, mul) {
-    S.gates.push({ id: nextId++, x: lane.c, y: -30, w: lane.w - 26, val, cap: 10 + Math.round(S.lv * 0.6), mul, flash: 0 });
+    // Shooting a gate raises its number. The old cap was 10 + 0.6 x level: 11 on levels 1-2 and only 22 at level 20,
+    // so pumped gates sat at "+11". The cap now grows with the difficulty level and with the squad, and the gain per
+    // hit tapers past +12 (hitTarget) instead of hitting a wall.
+    S.gates.push({ id: nextId++, x: lane.c, y: -30, w: lane.w - 26, val, cap: Math.round(16 + 1.6 * S.dl + Math.min(40, S.squad.n * 0.25)), mul, flash: 0 });
   }
   function spawnCrate(lane, what) {
     const hp = Math.round(14 + S.dl * 2.2);
@@ -327,7 +344,7 @@
     }
     for (const g of S.gates) {
       if (g.used || Math.abs(g.x - b.x) > g.w / 2 || Math.abs(g.y - b.y) > 14) continue;
-      if (!g.mul) { g.val = Math.min(g.cap, g.val + 0.12); g.flash = 1; }
+      if (!g.mul) { g.val = Math.min(g.cap, g.val + 0.12 * Math.min(1, 12 / Math.max(1, g.val))); g.flash = 1; }
       return true;
     }
     return false;
@@ -359,7 +376,7 @@
     } else if (what === 'air') {
       callAir(); floatText(c.x, c.y - 30, L('AIR STRIKE!', 'HAVA SALDIRISI!'), '#7df9ff');
     } else {
-      const add = 6 + Math.floor(S.lv / 4);
+      const add = 6 + Math.floor(S.lv / 4) + Math.round(Math.min(30, S.squad.n * 0.08));
       S.squad.n += add; floatText(c.x, c.y - 30, '+' + add + L(' SOLDIERS', ' ASKER'), '#9dffc2');
     }
   }
@@ -376,6 +393,49 @@
     }
     S.planes.push({ x, y: H + 180, speed: 400, dropT: 0, bombs: 12 });
     UI.toast(L('✈️ Air strike!', '✈️ Hava saldırısı!')); Sfx.play('plane');
+  }
+  const supUnlocked = k => (S ? S.lv : G.level) >= SUP[k].lv;
+  function useSupport(k) {
+    if (mode !== 'play' || paused || !S || !S.sup[k] || S.sup[k].cd > 0 || !supUnlocked(k)) return;
+    const q = S.squad;
+    S.sup[k].cd = SUP[k].cd;
+    if (k === 'heli') {
+      const total = 6 + Math.floor(S.lv / 2) + Math.round(Math.min(40, q.n * 0.1));
+      S.helis.push({ x: q.x, y: H + 260, st: 'in', t: 0, dropT: 0.4, gunT: 0.5, total, left: total, got: 0 });
+      UI.toast(L('🚁 Reinforcements inbound!', '🚁 Takviye geliyor!')); Sfx.play('plane');
+    } else if (k === 'strike') {
+      // Targets: the densest enemy clusters still up the road, or the boss.
+      const pts = [], C = S.castle;
+      const live = S.enemies.filter(e => !e.dead && e.y > 60 && e.y < SQUAD_Y - 60);
+      for (let i = 0; i < 8; i++) {
+        if (live.length) { const e = live[(i * 7) % live.length]; pts.push({ x: e.x + (Math.random() - 0.5) * 20, y: e.y + e.speed * 0.6 }); }
+        else if (C && !C.dead) pts.push({ x: C.x + (Math.random() - 0.5) * C.w * 0.8, y: C.y + 10 + Math.random() * 20 });
+        else pts.push({ x: layoutAt(S.dist).find(l => l.k === 'e').c + (Math.random() - 0.5) * 120, y: 160 + Math.random() * 260 });
+      }
+      pts.forEach((p, i) => S.missiles.push({ x0: p.x - 160, y0: p.y - 260, tx: clamp(p.x, ROAD_L + 8, ROAD_R - 8), ty: p.y, x: p.x - 160, y: p.y - 260, h: 520, u: 0, delay: i * 0.12 }));
+      UI.toast(L('🚀 Missile strike!', '🚀 Füze yağmuru!')); Sfx.play('plane');
+    } else {
+      S.shieldT = 6;
+      UI.toast(L('🛡️ Shield up!', '🛡️ Kalkan açık!')); Sfx.play('card');
+    }
+    supHud();
+  }
+  // Ability buttons: an icon with a cooldown ring (conic gradient), dimmed until ready; locked ones show the level.
+  function supHud() {
+    const bar = $('sup');
+    if (!bar) return;
+    const show = S && mode === 'play';
+    bar.style.display = show ? '' : 'none';
+    if (!show) return;
+    for (const k in SUP) {
+      const b = bar.querySelector('[data-sup=' + k + ']');
+      if (!b) continue;
+      const lock = !supUnlocked(k), cd = S.sup[k].cd, f = lock ? 0 : 1 - cd / SUP[k].cd, ready = !lock && cd <= 0, act = (k === 'shield' && S.shieldT > 0) || (k === 'heli' && S.helis.length);
+      b.className = 'sup' + (ready ? ' ready' : '') + (lock ? ' lock' : '') + (act ? ' act' : '');
+      b.style.setProperty('--f', (Math.round(f * 1000) / 10) + '%');
+      const t = b.querySelector('i');
+      if (t) t.textContent = lock ? L('Lv ', 'Sv ') + SUP[k].lv : ready ? SUP[k].name : Math.ceil(cd) + L(' s', ' sn');
+    }
   }
   function mortarTarget() {
     let best = null, bestN = 0;
@@ -409,7 +469,7 @@
     // End of the road: the level's boss arrives on the enemy lane and fights until it falls.
     if (!C && S.t >= S.length) {
       const el = layoutAt(S.dist + 90).find(l => l.k === 'e'), B = BOSSES[S.boss];
-      const box = { kale: [el.w - 16, 60, 40, CASTLE_Y], dev: [64, 80, 20, SQUAD_Y - 80], tank: [104, 40, 30, 170], heli: [92, 40, 30, 210] }[S.boss];
+      const box = { kale: [el.w - 16, 60, 40, CASTLE_Y], dev: [64, 80, 20, SQUAD_Y - 80], tank: [104, 40, 30, 170], heli: [92, 40, 30, 210], ejder: [110, 40, 30, 190] }[S.boss];
       S.castle = { type: S.boss, x: el.c, w: box[0], top: box[1], bot: box[2], stopY: box[3], lane: el, y: -90, hp: S.castleHp, max: S.castleHp,
         flash: 0, spawnT: 2, gunT: 4, mgT: 3, hitT: 1.2, arrived: false, t: 0 };
       banner(B.icon + ' ' + B.name.toUpperCase(), B.sub, '#ff8a95'); Sfx.play('boss');
@@ -433,6 +493,7 @@
         C.arrived = C.y >= C.stopY;
       }
       if (C.type === 'tank' && C.arrived) C.x = MID + Math.sin(C.t * 0.45) * 130;           // sweeps across both lanes
+      if (C.type === 'ejder' && C.arrived) C.x = MID + Math.sin(C.t * 0.38) * 120 + clamp(q.x - MID, -40, 40) * 0.5; // circles over the road
       if (C.type === 'heli' && C.arrived) C.x += clamp(q.x - C.x, -1, 1) * Math.min(Math.abs(q.x - C.x) * 3, 58) * dt;
       C.spawnT -= dt;
       if (C.spawnT <= 0 && C.arrived) {
@@ -441,15 +502,26 @@
       }
       // Cannon shells (castle, tank, helicopter bombs); the landing spot is marked so it can be dodged.
       if (C.type !== 'dev' && C.arrived && (C.gunT -= dt) <= 0) {
-        C.gunT = (C.type === 'heli' ? 5 : C.type === 'tank' ? 2.4 : Math.max(1.6, 3.2 - lv * 0.02)) * slow;
+        C.gunT = (C.type === 'heli' ? 5 : C.type === 'tank' ? 2.4 : C.type === 'ejder' ? 4.2 : Math.max(1.6, 3.2 - lv * 0.02)) * slow;
         const side = Math.random() < 0.5 ? -1 : 1;
-        S.shells.push({ foe: true, x0: C.x + side * C.w * 0.2, y0: C.y + 20, x1: clamp(q.x + (Math.random() - 0.5) * 30, ROAD_L + 10, ROAD_R - 10), y1: SQUAD_Y + 4, u: 0, dur: 1.5, x: C.x, y: C.y, h: 0 });
-        Sfx.play('mortar');
+        if (C.type === 'ejder') {
+          // Fire breath: three fireballs fan out over the squad's side of the road; each landing spot is marked.
+          for (let k = -1; k <= 1; k++) S.shells.push({ foe: true, fire: true, x0: C.x, y0: C.y + 30, x1: clamp(q.x + k * 70 + (Math.random() - 0.5) * 20, ROAD_L + 10, ROAD_R - 10), y1: SQUAD_Y + 4, u: -0.12 * (k + 1), dur: 1.35, x: C.x, y: C.y, h: 0 });
+          Sfx.play('boom');
+        } else {
+          S.shells.push({ foe: true, x0: C.x + side * C.w * 0.2, y0: C.y + 20, x1: clamp(q.x + (Math.random() - 0.5) * 30, ROAD_L + 10, ROAD_R - 10), y1: SQUAD_Y + 4, u: 0, dur: 1.5, x: C.x, y: C.y, h: 0 });
+          Sfx.play('mortar');
+        }
       }
       // Machine-gun bursts from the tank and the helicopter.
       if ((C.type === 'tank' || C.type === 'heli') && C.arrived && (C.mgT -= dt) <= 0) {
         C.mgT = (C.type === 'heli' ? 2.6 : 3.5) * slow;
         for (let k = 0; k < 6; k++) fireAt(C.x + (k - 2.5) * 5, C.y + C.bot, 250 + k * 12, 0.05);
+      }
+      // The drake spits a fan of embers between its breaths.
+      if (C.type === 'ejder' && C.arrived && (C.mgT -= dt) <= 0) {
+        C.mgT = 3.1 * slow;
+        for (let k = 0; k < 5; k++) { fireAt(C.x, C.y + C.bot, 210, 0); const b = S.ebullets[S.ebullets.length - 1], a = (k - 2) * 0.16, c = Math.cos(a), sn = Math.sin(a); const vx = b.vx * c - b.vy * sn; b.vy = b.vx * sn + b.vy * c; b.vx = vx; b.ember = true; }
       }
       // Rewards keep coming down the reward lane during the siege.
       const r = S.r2;
@@ -505,14 +577,14 @@
     });
     for (const s of S.shells) {
       s.u += dt / s.dur;
-      const u = Math.min(1, s.u);
+      const u = clamp(s.u, 0, 1);
       s.x = s.x0 + (s.x1 - s.x0) * u; s.y = s.y0 + (s.y1 - s.y0) * u; s.h = 4 * 170 * u * (1 - u) + 10 * (1 - u);
       if (s.u < 1) continue;
       s.dead = true;
       if (!s.foe) { explode(s.x1, s.y1, 48, 3 + 0.35 * Math.min(S.lv, 80), S.castleHp * 0.008); continue; }
       S.fx.push({ x: s.x1, y: s.y1, r: 40, life: 1, delay: 0 }); S.shake = Math.max(S.shake, 7); Sfx.play('boom');
       if (Math.abs(q.x - s.x1) < squadHalf() + 16) {
-        hurtSquad(pct(2 + Math.floor(S.dl / 8), 0.08), s.x1, s.y1);
+        hurtSquad(s.fire ? pct(2 + Math.floor(S.dl / 10), 0.05) : pct(2 + Math.floor(S.dl / 8), 0.08), s.x1, s.y1);
       }
     }
     S.shells = S.shells.filter(s => !s.dead);
@@ -536,6 +608,37 @@
       if (b.h <= 0) { b.dead = true; explode(b.x, b.y, 44, 5 + 0.5 * Math.min(S.lv, 80), S.castleHp * 0.05); }
     }
     S.bombs = S.bombs.filter(b => !b.dead);
+
+    // Support abilities.
+    for (const k in S.sup) S.sup[k].cd = Math.max(0, S.sup[k].cd - dt);
+    S.shieldT = Math.max(0, S.shieldT - dt); S.shieldHit = Math.max(0, (S.shieldHit || 0) - dt * 3);
+    // Reinforcement helicopter: flies in over the squad, hovers while soldiers slide down two ropes and the door
+    // gunner sprays the nearest enemies, then climbs away up the road.
+    for (const h of S.helis) {
+      h.t += dt;
+      if (h.st === 'in') { h.y += (SQUAD_Y - 40 - h.y) * Math.min(1, dt * 3); h.x += (q.x - h.x) * Math.min(1, dt * 4); if (h.t > 1.3) { h.st = 'hover'; h.t = 0; } }
+      else if (h.st === 'hover') {
+        h.x += (q.x - h.x) * Math.min(1, dt * 4);
+        if ((h.dropT -= dt) <= 0 && h.left > 0) { h.dropT = 0.32; const k = Math.min(h.left, Math.max(1, Math.round(h.total / 12))); h.left -= k; q.n += k; h.got += k; if (h.got >= h.total / 3 || !h.left) { floatText(q.x, SQUAD_Y - 60, '+' + h.got, '#9dffc2'); h.got = 0; } Sfx.play('card'); }
+        if ((h.gunT -= dt) <= 0) {
+          h.gunT = 0.11;
+          let tg = null;
+          for (const e of S.enemies) if (!e.dead && e.y > 80 && (!tg || e.y > tg.y)) tg = e;
+          const C2 = S.castle, tx = tg ? tg.x : C2 && !C2.dead ? C2.x : null, ty = tg ? tg.y : C2 && !C2.dead ? C2.y : null;
+          if (tx != null) { const bx = h.x + 22, by = h.y - 10, sp = 760, ux = (tx - bx) / Math.max(40, by - ty); S.bullets.push({ x: bx, y: by, vx: clamp(ux, -1.2, 1.2) * sp, dmg: 1.2 + S.dl * 0.06, speed: sp, kind: 'bullet', hits: 0, heli: true, y0: by }); }
+        }
+        if (h.t > 5.2) { h.st = 'out'; h.t = 0; }
+      } else { h.y -= (120 + h.t * 380) * dt; if (h.y < -400) h.dead = true; }
+    }
+    S.helis = S.helis.filter(h => !h.dead);
+    // Missile strike: each missile falls from high up on a slant onto the densest spot it was given.
+    for (const m of S.missiles) {
+      if ((m.delay -= dt) > 0) continue;
+      m.u += dt / 0.75;
+      const u = Math.min(1, m.u); m.x = m.x0 + (m.tx - m.x0) * u; m.y = m.y0 + (m.ty - m.y0) * u; m.h = 520 * (1 - u);
+      if (u >= 1) { m.dead = true; explode(m.tx, m.ty, 50, 6 + 0.6 * Math.min(S.lv, 80), S.castleHp * 0.035); }
+    }
+    S.missiles = S.missiles.filter(m => !m.dead);
 
     // Gates & crates ride the reward lane toward the squad; the squad collects gates it runs through.
     for (const g of S.gates) {
@@ -614,6 +717,11 @@
   const stop = () => { dragging = false; };
   cvs.addEventListener('pointerup', stop);
   cvs.addEventListener('pointercancel', stop);
+  const supBar = $('sup');
+  if (supBar && supBar.addEventListener) supBar.addEventListener('pointerdown', e => {
+    const b = e.target && e.target.closest ? e.target.closest('[data-sup]') : null;
+    if (b) { e.stopPropagation(); if (e.preventDefault) e.preventDefault(); useSupport(b.dataset.sup); }
+  });
 
   // ---------- Screens ----------
   function hud() {
@@ -625,6 +733,7 @@
       UI.html($('hp'), '🪖 ' + S.squad.n + ' &nbsp;·&nbsp; ' + w.icon + ' ' + w.name + (S.mortars.length ? ' &nbsp;·&nbsp; 💣' + S.mortars.length : ''));
       UI.prop($('prog'), 'width', Math.min(100, Math.round(S.t / S.length * 1000) / 10) + '%');
     } else { UI.html($('hp'), '🪖 ' + (5 + 2 * upgLv('squad'))); UI.prop($('prog'), 'width', '0%'); }
+    supHud();
   }
   function panel(html, center) {
     // Redrawing an open panel (tab switch, upgrade) swaps its content only, so the pop-in animation doesn't replay.
@@ -641,7 +750,8 @@
     L('<div class="upg"><div><b>📦 Crates</b><small>Shoot them open: a new weapon (pistol → rifle → machine gun → shotgun → rocket launcher → laser), 💣 mortar team, ✈️ air strike or extra soldiers.</small></div></div>', '<div class="upg"><div><b>📦 Sandıklar</b><small>Vurup kır: yeni silah (tabanca → tüfek → makineli → pompalı → roketatar → lazer), 💣 havan ekibi, ✈️ hava saldırısı ya da ek asker.</small></div></div>') +
     L('<div class="upg"><div><b>🟥 Enemy lane</b><small>The enemy flood comes down here and attacks your squad up close. 🎯 Snipers shoot from afar: switch to the enemy lane to hit them!</small></div></div>', '<div class="upg"><div><b>🟥 Düşman şeridi</b><small>Düşman seli buradan akar ve yaklaşınca takımına saldırır. 🎯 Nişancılar uzaktan ateş eder: onları vurmak için düşman şeridine geçmen gerekir!</small></div></div>') +
     L('<div class="upg"><div><b>⚠️ Level twists</b><small>Every level is different: snipers, bombers, shield bearers, fast floods, minefields, swarms…</small></div></div>', '<div class="upg"><div><b>⚠️ Seviye özellikleri</b><small>Her seviye farklı: nişancılar, bombacılar, kalkanlılar, hızlı sel, mayınlı yol, kalabalık…</small></div></div>') +
-    L('<div class="upg"><div><b>👹 Bosses</b><small>At the end of the road: 🏰 castle, 👹 giant, 🛡️ tank and 🚁 gunship in turn. The reward lane keeps flowing: power up, then charge the boss.</small></div></div>', '<div class="upg"><div><b>👹 Bosslar</b><small>Yolun sonunda sırayla 🏰 kale, 👹 dev, 🛡️ tank ve 🚁 helikopter. Ödül şeridi akmaya devam eder: güçlen, sonra bossa yüklen.</small></div></div>');
+    L('<div class="upg"><div><b>👹 Bosses</b><small>At the end of the road: 🏰 castle, 👹 armoured giant, 🛡️ tank, 🚁 gunship and 🐉 fire drake in turn. The reward lane keeps flowing: power up, then charge the boss.</small></div></div>', '<div class="upg"><div><b>👹 Bosslar</b><small>Yolun sonunda sırayla 🏰 kale, 👹 zırhlı dev, 🛡️ tank, 🚁 helikopter ve 🐉 ateş ejderi. Ödül şeridi akmaya devam eder: güçlen, sonra bossa yüklen.</small></div></div>') +
+    L('<div class="upg"><div><b>🚁 Support</b><small>Buttons at the bottom: 🚁 reinforcement helicopter (drops soldiers, its gunner covers you), 🚀 missile strike on the thickest enemies, 🛡️ shield dome that blocks all losses for 6 s. They recharge on their own.</small></div></div>', '<div class="upg"><div><b>🚁 Destek</b><small>Alttaki düğmeler: 🚁 takviye helikopteri (asker indirir, kapı nişancısı korur), 🚀 en kalabalık düşmanlara füze yağmuru, 🛡️ 6 sn boyunca hiç asker kaybettirmeyen kalkan. Kendiliğinden dolarlar.</small></div></div>');
 
   function startMenu() {
     mode = 'menu';
@@ -667,7 +777,7 @@
     UI.vibrate(80); Sfx.play('win');
     const stars = S.lostTotal === 0 ? 3 : S.squad.n >= 20 ? 2 : 1;
     pendingStars = stars + (lv % 10 === 0 ? 3 : 0);
-    setTimeout(() => panel(Kit.win({ title: { kale: L('CASTLE DOWN!', 'KALE DÜŞTÜ!'), dev: L('GIANT TOPPLED!', 'DEV DEVRİLDİ!'), tank: L('TANK WRECKED!', 'TANK HURDA!'), heli: L('GUNSHIP DOWN!', 'HELİKOPTER DÜŞTÜ!') }[S.boss], sub: L('Level ', 'Seviye ') + lv + ' · ' + S.squad.n + L(' soldiers · ', ' asker · ') + WEAPONS[S.squad.weapon].name, stars, reward: pendingReward, gems: pendingStars, ads: Kit.adsFor(G.level - 1) }), true), 900);
+    setTimeout(() => panel(Kit.win({ title: { kale: L('CASTLE DOWN!', 'KALE DÜŞTÜ!'), dev: L('GIANT TOPPLED!', 'DEV DEVRİLDİ!'), tank: L('TANK WRECKED!', 'TANK HURDA!'), heli: L('GUNSHIP DOWN!', 'HELİKOPTER DÜŞTÜ!'), ejder: L('DRAKE SLAIN!', 'EJDER YENİLDİ!') }[S.boss], sub: L('Level ', 'Seviye ') + lv + ' · ' + S.squad.n + L(' soldiers · ', ' asker · ') + WEAPONS[S.squad.weapon].name, stars, reward: pendingReward, gems: pendingStars, ads: Kit.adsFor(G.level - 1) }), true), 900);
   }
   function lose() {
     mode = 'end';
@@ -759,14 +869,15 @@
   }
   const formation = n => {
     const pts = [], cols = Math.min(6, n);
-    for (let i = 0; i < Math.min(n, 60); i++) pts.push({ x: ((i % cols) - (cols - 1) / 2) * 12, y: Math.floor(i / cols) * 11 });
+    // V2: bigger soldiers on screen need a wider grid (14 x 12.5); six columns still fit inside squadHalf().
+    for (let i = 0; i < Math.min(n, 60); i++) pts.push({ x: ((i % cols) - (cols - 1) / 2) * 14, y: Math.floor(i / cols) * 12.5 });
     return pts;
   };
   const crateIcon = c => (c.what === 'weapon' ? WEAPONS[Math.min(WEAPONS.length - 1, S.squad.weapon + 1)].icon : CRATE_ICON[c.what]);
 
   // Labels for both renderers. P maps world -> screen (projection in 3D, identity in 2D).
   function drawLabels(P, is3D) {
-    const q = S.squad, sp = P(q.x, SQUAD_Y, is3D ? 62 : 0), sy = is3D ? sp.y : sp.y - 30, w = WEAPONS[q.weapon];
+    const q = S.squad, sp = P(q.x, SQUAD_Y, is3D ? 80 : 0), sy = is3D ? sp.y : sp.y - 30, w = WEAPONS[q.weapon];
     ctx.fillStyle = q.flash > 0 ? '#ff4757' : 'rgba(15,10,40,.85)'; rr(sp.x - 34, sy - 14, 68, 28, 14); ctx.fill();
     ctx.strokeStyle = skinColor(); ctx.lineWidth = 3; ctx.stroke();
     outlined(String(q.n), sp.x, sy + 1, 18);
@@ -785,10 +896,22 @@
     }
     const C = S.castle;
     if (C && !C.dead) {
-      const p = P(C.x, C.y, is3D ? { kale: 150, dev: 110, tank: 70, heli: 190 }[C.type] : 0), y = is3D ? p.y : p.y - 60, bw = is3D ? 170 : C.w;
-      ctx.fillStyle = 'rgba(15,10,40,.85)'; rr(p.x - bw / 2, y - 10, bw, 20, 10); ctx.fill(); ctx.strokeStyle = '#fff'; ctx.lineWidth = 2; ctx.stroke();
-      ctx.fillStyle = '#ff4757'; rr(p.x - bw / 2 + 3, y - 7, (bw - 6) * Math.max(0, C.hp / C.max), 14, 7); ctx.fill();
-      outlined(BOSSES[C.type].icon + ' ' + Math.ceil(Math.max(0, C.hp)), p.x, y + 1, 13);
+      const p = P(C.x, C.y, is3D ? { kale: 150, dev: 150, tank: 90, heli: 190, ejder: 200 }[C.type] : 0), y = is3D ? p.y : p.y - 60, bw = is3D ? 120 : C.w;
+      ctx.fillStyle = 'rgba(15,10,40,.85)'; rr(p.x - bw / 2, y - 7, bw, 14, 7); ctx.fill(); ctx.strokeStyle = '#fff'; ctx.lineWidth = 2; ctx.stroke();
+      ctx.fillStyle = '#ff4757'; rr(p.x - bw / 2 + 2, y - 5, (bw - 4) * Math.max(0, C.hp / C.max), 10, 5); ctx.fill();
+      // Named boss bar across the top (under the HUD), with a trailing "recent damage" segment.
+      if (is3D) {
+        const sa = UI.safeArea(), tw = Math.min(360, innerWidth - 40), tx = innerWidth / 2 - tw / 2, ty = sa.hudBottom + 22, f = Math.max(0, C.hp / C.max);
+        C.lag = C.lag == null ? f : Math.max(f, C.lag - 0.004);
+        const intro = Math.min(1, C.t / 0.8);
+        ctx.globalAlpha = intro;
+        outlined(BOSSES[C.type].icon + ' ' + BOSSES[C.type].name.toUpperCase(), innerWidth / 2, ty - 2, 17, '#ffd0d5', '#3a0010');
+        ctx.fillStyle = 'rgba(15,10,40,.9)'; rr(tx, ty + 10, tw, 18, 9); ctx.fill(); ctx.strokeStyle = C.flash > 0.5 ? '#fff' : '#ff8a95'; ctx.lineWidth = 2; ctx.stroke();
+        ctx.fillStyle = '#ffd23f'; rr(tx + 3, ty + 13, (tw - 6) * C.lag * intro, 12, 6); ctx.fill();
+        ctx.fillStyle = C.flash > 0.5 ? '#ff9aa4' : '#ff3b4e'; rr(tx + 3, ty + 13, (tw - 6) * f * intro, 12, 6); ctx.fill();
+        outlined(Math.ceil(Math.max(0, C.hp)) + ' / ' + C.max, innerWidth / 2, ty + 19, 11);
+        ctx.globalAlpha = 1;
+      } else outlined(BOSSES[C.type].icon + ' ' + Math.ceil(Math.max(0, C.hp)), p.x, y + 1, 13);
     }
     for (const e of S.enemies) if (e.kind === 'sniper' && e.stopY && e.y >= e.stopY - 2) { const p = P(e.x, e.y, is3D ? 36 : 0); outlined('🎯', p.x, is3D ? p.y : p.y - 16, 14); }
     for (const e of S.enemies) if (e.brute) { const p = P(e.x, e.y, is3D ? 48 : 0); outlined(String(Math.ceil(e.hp)), p.x, is3D ? p.y : p.y - 20, 12, '#ffd0d5', '#4a000c'); }
@@ -859,7 +982,12 @@
     ctx.fillStyle = '#2d3748';
     for (const m of S.mortars) { ctx.beginPath(); ctx.arc(m.x, m.y, 7, 0, TAU); ctx.fill(); }
     ctx.fillStyle = skinColor();
-    for (const p of formation(S.squad.n)) { ctx.beginPath(); ctx.arc(S.squad.x + p.x, SQUAD_Y + p.y, 5, 0, TAU); ctx.fill(); }
+    for (const p of formation(S.squad.n)) { ctx.beginPath(); ctx.arc(S.squad.x + p.x, SQUAD_Y + p.y, 6, 0, TAU); ctx.fill(); }
+    if (S.shieldT > 0) { ctx.strokeStyle = '#7df9ff'; ctx.lineWidth = 3; ctx.beginPath(); ctx.arc(S.squad.x, SQUAD_Y + 20, squadHalf() + 18, 0, TAU); ctx.stroke(); }
+    ctx.fillStyle = '#4b5563';
+    for (const h of S.helis) { ctx.fillRect(h.x - 10, h.y - 30, 20, 60); ctx.fillRect(h.x - 40, h.y - 2, 80, 4); }
+    ctx.fillStyle = '#ff8a3a';
+    for (const m of S.missiles) if (m.delay <= 0) { ctx.beginPath(); ctx.arc(m.x, m.y - m.h * 0.3, 4, 0, TAU); ctx.fill(); }
     drawLabels((x, y) => ({ x, y }), false);
   }
   function drawOverlay3D() {
@@ -900,6 +1028,8 @@
       const en = S.enemies.filter(e => e.y > 300), g = S.gates.filter(g => g.y > 150)[0];
       S.squad.tx = en.length > 2 ? en[en.length - 1].x : g ? g.x : S.castle ? S.castle.x : 112;
       if (ex.includes('air') && i === steps - 22) callAir();
+      if (ex.includes('heli') && i === steps - 60) { S.sup.heli.cd = 0; useSupport('heli'); }
+      if (ex.includes('shield') && i === steps - 30) { S.sup.strike.cd = 0; useSupport('strike'); S.sup.shield.cd = 0; S.lv = Math.max(S.lv, 3); useSupport('shield'); }
       update(0.05);
     }
   }
