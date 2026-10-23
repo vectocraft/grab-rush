@@ -7,6 +7,17 @@ Kullanıcı, YouTube Shorts kapağı için Nano Banana'nın ürettiği görseli 
 - `docs/art-target/suru-seli-hedef.jpg`: hedef his
 - `docs/art-target/arrow-legends-simdi.jpg`: Arrow Legends'ın şimdiki hali. Hedef görsel (`arrow-legends-hedef.jpg`) sonradan eklenecek; eklenmediyse aynı dili Arrow Legends'a da uygula.
 
+## ÖNCELİK: önce EFEKTLER, sonra grafikler
+Kullanıcı özellikle Arrow Legends hedef görselindeki (`docs/art-target/arrow-legends-hedef.jpg`) **efektleri** çok beğendi: "Grafiklerden önce efektleri bu şekilde yapmak lazım." Sıra şöyle olsun: önce efekt sistemi (her iki oyunda), sonra ortam ve grafik iyileştirmeleri.
+Hedef görseldeki efektler:
+- Okçudan çıkan **yelpaze şeklinde çoklu ok yaylımı**; her okun parlak, renkli ışık izi var.
+- Atış anında yayın önünde **parlak patlama ve kıvılcım saçılması**.
+- Düşmanlar arasında zincirlenen **mor-yeşil şimşek** (chain lightning).
+- İsabette **taş parçaları fırlıyor, zeminde çatlaklar** oluşuyor, kısa ekran sarsıntısı.
+- Düşman üstünde **hasar sayıları** (ör. "19").
+- Oyuncunun altında parlayan **aura halkası**.
+Efektleri tekrar kullanılabilir bir modülde topla (ör. `ortak/fx3d.js`). Sürü Seli'nde de aynı sistemi kullan: mermi izleri, namlu alevleri, isabet kıvılcımları, şimşek.
+
 ## Sürü Seli (`suru-seli/`)
 1. Ortam: gece / alacakaranlık teması, koyu mor-lacivert gökyüzü, daha yüksek kontrast, canlı renkler.
 2. Kapılar: neon parlayan çerçeveler (yeşil ödül / kırmızı ceza), ışık hâlesi, sayılar daha büyük ve okunaklı.
