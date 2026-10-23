@@ -18,7 +18,7 @@ const SCENES = {
   // V2: a dense enemy wave on the road, every boss model, and the support abilities in action.
   'suru-wave': { url: 'suru-seli/index.html#demo:12:200:big,weapon=2', lang: 'tr' },
   'suru-giant': { url: 'suru-seli/index.html#demo:2:300:big,boss,weapon=2', lang: 'tr' },
-  'suru-tank': { url: 'suru-seli/index.html#demo:3:140:big,boss,weapon=2', lang: 'tr' },
+  'suru-tank': { url: 'suru-seli/index.html#demo:3:105:big,boss,weapon=0', lang: 'tr' },
   'suru-dragon': { url: 'suru-seli/index.html#demo:5:150:big,boss,weapon=2', lang: 'tr' },
   'suru-support': { url: 'suru-seli/index.html#demo:8:160:big,weapon=2,heli,shield', lang: 'tr' },
   // A normal fight room a couple of seconds in (bot-driven hero, enemies up, arrows in flight).

@@ -97,4 +97,22 @@
 8. **Sevimli ve okunaklı yaratıklar:** doygun ve temiz palet, düşman ile zemin arasında kontrast. Ekran kalabalıklaştığında bile oyuncu ve tehlikeli mermiler en parlak öğeler olsun.
 
 ## Bu görevde uygulananlar
-(doldurulacak)
+Ayrıntı: `docs/GORSEL-RAPOR-V2.md`.
+
+**Crowd Surge**
+- Çıkarım 1: dalgalar ~1.5–2 kat kalabalık ve sıkı kümeler hâlinde.
+- Çıkarım 3: boss saldırıları içi dolan kırmızı alanla önceden görünüyor (dev çekici, top mermileri, ejder ateşi); tek vuruşta silme yok.
+- Çıkarım 4: üstte isimli boss can barı, vuruşta parlıyor, "son hasar" şeridi.
+- Çıkarım 5: dolum halkalı 3 destek düğmesi (takviye helikopteri, füze yağmuru, kalkan).
+- Çıkarım 6: iri ve bombacı düşmanlar için yol başında uyarı işareti.
+- Çıkarım 7 (kısmen): birim türleri zaten görsel olarak ayrıydı; askerler büyütüldü.
+- Uygulanmadı: 2 (iki şeritli tasarımda geçerli değil), 8 (görev reklam akışına dokunmayı yasaklıyor).
+
+**Arrow Legends**
+- Çıkarım 1: boss uyarı daireleri doluyor, inmeden önce titreşip kıvılcım saçıyor; meteorun ateş izi var.
+- Çıkarım 2: kritik sayılar büyük, altın, "!" ve pop; element hasarı kendi renginde.
+- Çıkarım 3: beyaz flaş + ezilme, kritikte hit-stop ve sarsıntı (kahraman vurulma efekti hatası da düzeltildi).
+- Çıkarım 4 (kısmen): boss girişi ve öfke fazı görsel olarak ayrıldı; arena kapanması/yeni desen eklenmedi (oyun mantığı).
+- Çıkarım 6: tutarlı element dili + düşman üstünde 🔥 ❄️ ⚡ ☠️ durum ikonları.
+- Çıkarım 8: daha doygun, rim ışıklı, kalın çizgili yaratıklar; düşman mermilerinde parlak iz.
+- Uygulanmadı: 5 (mermi desenleri oyun mantığı), 7 (yetenek kartı nadirlik çerçevesi — ama her yetenek kendi seçim efektini oynatıyor).
