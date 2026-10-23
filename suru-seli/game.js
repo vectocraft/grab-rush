@@ -915,6 +915,8 @@
     }
     for (const e of S.enemies) if (e.kind === 'sniper' && e.stopY && e.y >= e.stopY - 2) { const p = P(e.x, e.y, is3D ? 36 : 0); outlined('🎯', p.x, is3D ? p.y : p.y - 16, 14); }
     for (const e of S.enemies) if (e.brute) { const p = P(e.x, e.y, is3D ? 48 : 0); outlined(String(Math.ceil(e.hp)), p.x, is3D ? p.y : p.y - 20, 12, '#ffd0d5', '#4a000c'); }
+    // Heads-up for special enemies still far up the road (a pulsing warning over where they will come from).
+    for (const e of S.enemies) if ((e.brute || e.kind === 'bomber') && e.y > -40 && e.y < 90) { const p = P(e.x, 90, is3D ? 30 : 0); ctx.globalAlpha = 0.6 + 0.4 * Math.sin(S.t * 10); outlined(e.brute ? '⚠️' : '💣', p.x, p.y, 16); ctx.globalAlpha = 1; }
     if (!is3D) {
       for (const p0 of S.parts) { ctx.globalAlpha = Math.max(0, p0.life); ctx.fillStyle = p0.c; ctx.fillRect(p0.x - 3, p0.y - 3, 6, 6); }
       ctx.globalAlpha = 1;
