@@ -1,0 +1,610 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<meta name="theme-color" content="#0b1433">
+<title>Grab Rush</title>
+<link rel="stylesheet" href="ortak/ui.css">
+</head>
+<body class="hub">
+<div class="hub-bg"></div>
+
+<header class="topbar">
+  <div class="profile">
+    <div class="avatar">🕹️<span class="plv" id="plv">1</span></div>
+    <div class="pxp"><b id="pname">Player</b><div class="xpbar"><i id="xpbar" style="width:0"></i></div></div>
+  </div>
+  <div class="cur"><i class="coin"></i><b id="coins">0</b><button class="plus" id="plus">+</button></div>
+  <button class="icon-btn" id="settingsBtn">⚙️</button>
+</header>
+
+<div class="pages">
+  <section class="page" id="pg-shop"><div class="page-in" id="shop"></div></section>
+  <section class="page on" id="pg-play"><div class="page-in">
+    <div class="logo">
+      <img src="ortak/img/emblem.png" alt="">
+      <div><p class="wordmark">Grab Rush</p>
+      <p class="tagline" id="tagline">6 games · one wallet · offline</p></div>
+    </div>
+    <div id="playStrips"></div>
+    <div id="cards"></div>
+  </div></section>
+  <section class="page" id="pg-rewards"><div class="page-in" id="rewards"></div></section>
+</div>
+
+<nav class="bottomnav" id="nav">
+  <button class="nav" data-tab="shop"><span class="ni">🛒</span><span id="nShop">Shop</span><i class="dot hidden" id="shopDot">!</i></button>
+  <button class="nav on" data-tab="play"><span class="ni">⚔️</span><span id="nPlay">Play</span></button>
+  <button class="nav" data-tab="rewards"><span class="ni">🎁</span><span id="nRewards">Rewards</span><i class="dot hidden" id="rewDot">1</i></button>
+</nav>
+
+<div class="overlay center hidden" id="ov"></div>
+
+<script src="ortak/economy.js"></script>
+<script src="ortak/gicons-data.js"></script>
+<script src="ortak/gicons.js"></script>
+<script src="ortak/cloud.js"></script>
+<script src="ortak/sound.js"></script>
+<script src="ortak/ads.js"></script>
+<script src="ortak/iap.js"></script>
+<script src="ortak/kit.js"></script>
+<script src="ortak/fx.js"></script>
+<script src="ortak/art.js"></script>
+<script src="arrow-legends/skins.js"></script>
+<script>
+(function () {
+  const $ = id => document.getElementById(id);
+  const GAMES = [
+    { id: 'arrow', href: 'arrow-legends/index.html', img: 'arrow.webp', acc: '#ffb12a', name: 'Arrow Legends', genre: () => L('Action RPG', 'Aksiyon RPG'), isNew: () => L('NEW', 'YENİ') },
+    { id: 'koloni', href: 'koloni-kapismasi/index.html', img: 'koloni.webp', acc: '#4d8dff', name: 'Colony Clash', genre: () => L('Strategy', 'Strateji') },
+    { id: 'suru', href: 'suru-seli/index.html', img: 'suru.webp', acc: '#3be07a', name: 'Crowd Surge', genre: () => L('Action', 'Aksiyon') },
+    { id: 'delik', href: 'obur-delik/index.html', img: 'delik.webp', acc: '#a78bfa', name: 'Hungry Hole', genre: () => L('Swallow & grow', 'Yut ve büyü'), isNew: () => L('7 MAPS', '7 HARİTA') },
+    { id: 'maden', href: 'altin-ocagi/index.html', img: 'maden.webp', acc: '#ffc83d', name: 'Gold Mine Empire', genre: () => L('Idle tycoon', 'Boşta kazan') },
+    { id: 'cag', href: 'caglar-savasi/index.html', img: 'cag.webp', acc: '#ff6b7a', name: 'Age Wars', genre: () => L('Battle', 'Savaş') },
+  ];
+  const GOLD_GAMES = ['arrow', 'koloni', 'suru', 'cag', 'delik'];
+  const DAILY = [5, 8, 10, 12, 15, 20, 40];
+  const STAR_AD_MAX = 3;
+  const CHEST = { gold: { cost: 40 }, royal: { cost: 200 } };
+  let tab = 'play';
+  const g = id => Save.load().games[id] || {};
+  const lvOf = id => id === 'maden' ? ((g('maden').shafts && g('maden').shafts.length) || 1) : id === 'arrow' ? (g('arrow').chapter || 1) : (g(id).level || 1);
+  const today = () => new Date().toDateString();
+  const weekId = () => { const d = new Date(); d.setHours(0, 0, 0, 0); return Math.floor((d.getTime() - d.getTimezoneOffset() * 6e4) / 6048e5); };
+
+  // Static labels.
+  $('tagline').textContent = L('6 games · one wallet · offline', '6 oyun · tek kasa · internetsiz');
+  $('nShop').textContent = L('Shop', 'Mağaza'); $('nPlay').textContent = L('Play', 'Oyna'); $('nRewards').textContent = L('Rewards', 'Ödüller');
+
+  // ---------- Player level (from progress in every game) ----------
+  const player = () => PlayerLv.info();
+
+  function topbar() {
+    const d = Save.load(), p = player();
+    $('coins').textContent = Kit.fmt(d.coins);
+    $('plv').textContent = p.lv; $('xpbar').style.width = Math.round(p.pct * 100) + '%';
+    const tt = PlayerLv.title(p.lv);
+    $('pname').textContent = tt.name; // the level is on the avatar badge
+    const av = document.querySelector('.avatar'); if (av) av.style.boxShadow = '0 0 0 3px ' + tt.color + ', 0 0 14px ' + tt.color;
+    const q = Quests.ready() + (Save.dailyStatus().available ? 1 : 0) + (PlayerLv.pending().length ? 1 : 0);
+    $('rewDot').textContent = q; $('rewDot').classList.toggle('hidden', !q);
+    $('shopDot').classList.toggle('hidden', !chestFree('gold'));
+  }
+
+  // ---------- Play page ----------
+  function renderPlay() {
+    const st = Save.dailyStatus(), ready = Quests.ready(), p0 = player();
+    $('playStrips').innerHTML =
+      (st.available ? '<div class="strip hot" data-go="rewards">' + Art.gift() + '<div><b>' + L('Daily reward is ready!', 'Günlük ödül hazır!') + '</b><small>' + L('Day ', 'Gün ') + st.day + ' · +' + st.amount + ' ⭐</small></div></div>' : '') +
+      (ready ? '<div class="strip hot" data-go="rewards">' + Art.stars(2) + '<div><b>' + L('Quest complete!', 'Görev tamamlandı!') + '</b><small>' + L('Claim your stars in Rewards', 'Yıldızlarını Ödüller\'den al') + '</small></div></div>' : '') +
+      (PlayerLv.pending().length ? '<div class="strip hot" data-go="rewards">' + Art.stars(3) + '<div><b>' + L('Level reward ready!', 'Seviye ödülü hazır!') + '</b><small>' + L('Player level ', 'Oyuncu seviyesi ') + p0.lv + '</small></div></div>' : '') +
+      (dailyPayouts().length ? '<div class="strip hot" data-payout="1">' + Art.stars(3) + '<div><b>' + L('Your daily stars are ready', 'Günlük yıldızların hazır') + '</b><small>+' + dailyPayouts().reduce((a, x) => a + x.n, 0) + ' ⭐ · ' + L('Star Card / Premium', 'Yıldız Kartı / Premium') + '</small></div></div>' : '') +
+      (starter() ? '<div class="strip hot" data-go="shop">' + Art.chest('royal') + '<div><b>' + L('Starter Pack · 800% value', 'Başlangıç Paketi · %800 değer') + '</b><small>' + L('Limited time offer in the Shop', 'Mağazada sınırlı süreli teklif') + '</small></div></div>' : '') +
+      (chestFree('gold') ? '<div class="strip" data-chest="gold" data-ad="1">' + Art.chest('gold') + '<div><b>' + L('Free Golden Chest', 'Bedava Altın Sandık') + ' · ' + (GOLD_FREE - goldDay().n) + '/' + GOLD_FREE + (goldDay().ads ? ' · 📺 ' + goldDay().ads + '/' + GOLD_ADS : '') + '</b><small>' + L((GOLD_FREE - goldDay().n) + ' left today · watch ', 'Bugün ' + (GOLD_FREE - goldDay().n) + ' hak · ') + goldDay().ads + '/' + GOLD_ADS + L(' ads', ' reklam') + '</small></div></div>' : '');
+    $('cards').innerHTML = GAMES.map(gm => {
+      const lv = lvOf(gm.id);
+      const sub = gm.id === 'maden'
+        ? L('Floor ' + lv + ' · ', 'Kat ' + lv + ' · ') + (g('maden').elev && g('maden').elev.m ? L('managers working', 'yöneticiler çalışıyor') : L('miners waiting', 'madenciler bekliyor'))
+        : (gm.id === 'arrow' ? L('Chapter ', 'Bölüm ') : L('Level ', 'Seviye ')) + lv + (g(gm.id).gold != null ? ' · 💰 ' + Kit.fmt(Math.floor(g(gm.id).gold)) : '');
+      return '<a class="game-card" href="' + gm.href + '" style="--acc:' + gm.acc + ';margin-bottom:14px">' +
+        '<img src="ortak/img/' + gm.img + '" alt="">' + '<span class="gc-lv">' + (gm.id === 'maden' ? '⛏️ ' : '🏆 ') + lv + '</span>' +
+        (gm.isNew ? '<span class="gc-new">' + gm.isNew() + '</span>' : '') +
+        '<div class="gc-body"><div><span class="gc-genre">' + gm.genre() + '</span><p class="gc-title">' + gm.name + '</p><div class="gc-sub">' + sub + '</div></div>' +
+        '<span class="gc-play">' + L('PLAY', 'OYNA') + ' ▶</span></div></a>';
+    }).join('');
+    document.querySelectorAll('.game-card').forEach(card => card.addEventListener('click', async e => {
+      e.preventDefault();
+      if (card.dataset.busy) return;
+      card.dataset.busy = '1';
+      await Ads.gameSwitch(card.getAttribute('href'));
+      location.href = card.getAttribute('href');
+    }));
+  }
+
+  // ---------- Shop page (store/market-plan.md) ----------
+  const starAdsToday = () => { const d = Save.load(); if (!d.starAds || d.starAds.day !== today()) d.starAds = { day: today(), n: 0 }; return d.starAds; };
+  const starAdsLeft = () => STAR_AD_MAX - starAdsToday().n;
+  // Golden Chest: 3 free a day, each one after 2 short ads (progress kept); Royal: one a week after 3 long ads.
+  const GOLD_FREE = 3, GOLD_ADS = 2;
+  const goldDay = () => { const d = Save.load(), g = d.goldFree; return g && g.d === today() ? g : (d.goldFree = { d: today(), n: 0, ads: 0 }); };
+  const chestFree = k => { const c = Save.load().chests || {}; return k === 'gold' ? goldDay().n < GOLD_FREE : c.royal !== weekId(); };
+  const ROYAL_PITY = 10;
+  // The weekly free Royal Chest takes 3 ads (it is worth it); progress is kept for the week.
+  const ROYAL_ADS = 3;
+  const royalAds = () => { const d = Save.load(); return d.royalAds && d.royalAds.w === weekId() ? d.royalAds.n : 0; };
+  const untilMidnight = () => { const n = new Date(), m = new Date(n); m.setHours(24, 0, 0, 0); return m - n; };
+  const hms = ms => { const s = Math.max(0, Math.floor(ms / 1000)), h = Math.floor(s / 3600); return (h ? h + ':' : '') + String(Math.floor(s / 60) % 60).padStart(2, '0') + ':' + String(s % 60).padStart(2, '0'); };
+  const gameName = id => GAMES.find(x => x.id === id).name;
+  const goldFor = (id, k) => Math.round(Save.goldBase(id) * k / 50) * 50; // same gold base as the in-game shops
+  const dealCost = (k, off) => Math.round(15 * k * (1 - off / 100)); // 15 ⭐ per base = the best in-game rate, so the discount is real
+  // Starter pack: shown once a game reaches level 5 (Arrow Legends: chapter 2), for 48 hours, until bought.
+  function starter() {
+    const d = Save.load(), o = d.offers || (d.offers = {});
+    if (IAP.bought('starter_pack')) return null;
+    if (!o.starterAt) {
+      if (!GOLD_GAMES.some(id => lvOf(id) >= (id === 'arrow' ? 2 : 5)) && player().lv < 3) return null;
+      o.starterAt = Date.now(); Save.save();
+    }
+    const left = o.starterAt + 48 * 3600e3 - Date.now();
+    return left > 0 ? left : null;
+  }
+  // Daily deals: six shelves picked from the date — one free (ad), gold bundles and a chest at a discount (stars).
+  function deals() {
+    const d = Save.load();
+    if (!d.deals || d.deals.day !== today()) d.deals = { day: today(), got: [] };
+    let h = 0; for (const c of today()) h = (h * 31 + c.charCodeAt(0)) >>> 0;
+    const games = GOLD_GAMES.slice().sort((a, b) => ((h >> (GOLD_GAMES.indexOf(a) * 3)) & 7) - ((h >> (GOLD_GAMES.indexOf(b) * 3)) & 7));
+    const list = [
+      h % 2 ? { kind: 'stars', n: 10, ad: true } : { kind: 'gold', game: games[4], n: goldFor(games[4], 1), ad: true },
+      { kind: 'gold', game: games[0], n: goldFor(games[0], 2), cost: dealCost(2, 30), off: 30 },
+      { kind: 'gold', game: games[1], n: goldFor(games[1], 4), cost: dealCost(4, 35), off: 35 },
+      { kind: 'chest', n: 1, cost: 25, off: 38 },
+      { kind: 'gold', game: games[2], n: goldFor(games[2], 6), cost: dealCost(6, 40), off: 40 },
+      { kind: 'gold', game: games[3], n: goldFor(games[3], 10), cost: dealCost(10, 50), off: 50 },
+    ];
+    return list.map((x, i) => Object.assign(x, { i, got: d.deals.got.includes(i) }));
+  }
+  const dealHtml = x => {
+    const icon = x.kind === 'stars' ? '⭐' : x.kind === 'chest' ? Art.chest('gold') : '💰';
+    const what = x.kind === 'stars' ? '+' + x.n + ' ⭐' : x.kind === 'chest' ? L('Golden Chest', 'Altın Sandık') : '+' + Kit.fmt(x.n);
+    const sub = x.kind === 'gold' ? gameName(x.game) : x.kind === 'chest' ? L('2 games + stars', '2 oyun + yıldız') : L('Free stars', 'Bedava yıldız');
+    return '<div class="deal' + (x.got ? ' got' : '') + (x.ad ? ' free' : '') + '">' + (x.off ? '<em>-%' + x.off + '</em>' : x.ad ? '<em class="g">' + L('FREE', 'BEDAVA') + '</em>' : '') +
+      '<div class="di">' + icon + '</div><b>' + what + '</b><small>' + sub + '</small>' +
+      (x.got ? '<button class="btn small gray" disabled>✓</button>' : x.ad ? '<button class="btn small green" data-deal="' + x.i + '"><span class="ad-ico">AD</span>' + L('Free', 'Al') + '</button>'
+        : '<button class="btn small ' + (Save.load().coins >= x.cost ? 'purple' : 'gray') + '" data-deal="' + x.i + '">⭐ ' + x.cost + '</button>') + '</div>';
+  };
+  async function buyDeal(i) {
+    const x = deals()[i], d = Save.load();
+    if (!x || x.got) return;
+    if (x.ad) { if (!(await Ads.rewarded('deal_free'))) { UI.toast(L('Ad not completed', 'Reklam tamamlanmadı')); return; } }
+    else if (!Save.spend(x.cost)) { UI.toast(L('Not enough ⭐ stars', 'Yetersiz ⭐ yıldız')); return; }
+    d.deals.got.push(i); Save.save();
+    Ads.track('deal_buy', { kind: x.kind, cost: x.cost || 0 });
+    if (x.kind === 'chest') { openChest('gold'); return; }
+    if (x.kind === 'stars') Save.addCoins(x.n);
+    else { const g = d.games[x.game] || (d.games[x.game] = {}); g.gold = (g.gold || 0) + x.n; Save.save(); }
+    Fx.reveal({ title: L('Daily deal', 'Günlük fırsat'), items: [x.kind === 'stars' ? { icon: '⭐', label: '+' + x.n, sub: L('Stars', 'Yıldız'), rarity: 'legendary' } : { icon: '💰', label: '+' + Kit.fmt(x.n), sub: gameName(x.game), rarity: 'rare' }] }).then(render);
+  }
+  // Star Card (30 days) and Premium pay a daily amount, claimed in the Shop or from the Play page.
+  function dailyPayouts() {
+    const d = Save.load(), out = [];
+    if (d.starCard && d.starCard.until > Date.now() && d.starCard.claimed !== today()) out.push({ k: 'card', n: IAP.OFFERS.star_card_30.daily });
+    if (d.premium && d.premiumClaimed !== today()) out.push({ k: 'prem', n: IAP.OFFERS.premium_bundle.daily });
+    return out;
+  }
+  function claimPayouts() {
+    const d = Save.load(), list = dailyPayouts();
+    if (!list.length) return 0;
+    let n = 0;
+    for (const x of list) { n += x.n; if (x.k === 'card') d.starCard.claimed = today(); else d.premiumClaimed = today(); }
+    Save.addCoins(n); Save.save(); UI.toast('⭐ +' + n); Sfx.play('coin');
+    return n;
+  }
+  function renderShop() {
+    const d = Save.load(), left = starAdsLeft(), st = starter(), card = d.starCard && d.starCard.until > Date.now() ? d.starCard : null;
+    const daysLeft = card ? Math.ceil((card.until - Date.now()) / 864e5) : 0, pay = dailyPayouts(), pity = d.pity || 0;
+    const SC = IAP.OFFERS.star_card_30, PB = IAP.OFFERS.premium_bundle, SP = IAP.OFFERS.starter_pack;
+    $('shop').innerHTML =
+      // 1. Limited offer
+      (st ? '<div class="sect"><h2>⏳ ' + L('Limited offer', 'Sınırlı teklif') + '</h2></div>' +
+        '<div class="offer starter"><span class="badge">' + L('800% VALUE', '%800 DEĞER') + '</span>' + Art.chest('royal') +
+        '<h3>' + L('Starter Pack', 'Başlangıç Paketi') + '</h3>' +
+        '<ul><li>' + SP.stars + ' ⭐</li><li>' + L('💰 ' + Kit.fmt(SP.gold) + ' gold in every game', 'Her oyuna 💰 ' + Kit.fmt(SP.gold) + ' altın') + '</li><li>' + L('Only once', 'Sadece bir kez') + ' · ⏱ <b data-left="' + (Date.now() + st) + '">' + hms(st) + '</b></li></ul>' +
+        '<button class="btn gold pulse" data-buy="starter_pack">' + IAP.priceOf('starter_pack') + '</button></div>' : '') +
+      // 2. Daily deals
+      '<div class="sect"><h2>🔥 ' + L('Daily deals', 'Günlük fırsatlar') + ' <small class="tmr">⏱ <b data-left="' + (Date.now() + untilMidnight()) + '">' + hms(untilMidnight()) + '</b></small></h2></div>' +
+      '<div class="deals">' + deals().map(dealHtml).join('') + '</div>' +
+      // 2b. Arrow Legends outfits (baked 3D portraits; tap for a turntable preview)
+      outfitShop() +
+      // 3. Star Card + Premium
+      '<div class="duo">' +
+        '<div class="ocard card30">' + (card ? '' : '<em>' + L('400% VALUE', '%400 DEĞER') + '</em>') + '<div class="oi">💳</div><b>' + L('Star Card', 'Yıldız Kartı') + '</b>' +
+          '<small>' + (card ? L(daysLeft + ' days left · +' + SC.daily + ' ⭐ every day', daysLeft + ' gün kaldı · her gün +' + SC.daily + ' ⭐') : L('Now ' + SC.stars + ' ⭐, then ' + SC.daily + ' ⭐ a day for 30 days (2100 ⭐)', 'Hemen ' + SC.stars + ' ⭐, sonra 30 gün her gün ' + SC.daily + ' ⭐ (2100 ⭐)')) + '</small>' +
+          (card && pay.some(x => x.k === 'card') ? '<button class="btn small green pulse" data-payout="1">+' + SC.daily + ' ⭐ ' + L('Claim', 'Al') + '</button>'
+            : '<button class="btn small gold" data-buy="star_card_30">' + (card ? L('Extend · ', 'Uzat · ') : '') + IAP.priceOf('star_card_30') + '</button>') + '</div>' +
+        '<div class="ocard prem"><div class="oi">👑</div><b>Premium</b>' +
+          '<small>' + L('No ads in any game + ' + PB.stars + ' ⭐ + ' + PB.daily + ' ⭐ every day', 'Hiçbir oyunda reklam yok + ' + PB.stars + ' ⭐ + her gün ' + PB.daily + ' ⭐') + '</small>' +
+          (d.premium ? (pay.some(x => x.k === 'prem') ? '<button class="btn small green pulse" data-payout="1">+' + PB.daily + ' ⭐ ' + L('Claim', 'Al') + '</button>' : '<button class="btn small gray" disabled>✓ ' + L('Active', 'Aktif') + '</button>')
+            : '<button class="btn small gold" data-buy="premium_bundle">' + IAP.priceOf('premium_bundle') + '</button>') + '</div>' +
+      '</div>' +
+      // 4. Chests (+ guarantee counter and odds)
+      '<div class="sect"><h2>' + L('Chests', 'Sandıklar') + ' <button class="oddsb" data-odds="1">ⓘ ' + L('Odds', 'Olasılıklar') + '</button></h2></div>' +
+      '<div class="chests">' + ['gold', 'royal'].map(k => {
+        const free = chestFree(k);
+        return '<div class="chest ' + k + (free ? ' ready' : '') + '">' + Art.chest(k) +
+          '<b>' + (k === 'gold' ? L('Golden Chest', 'Altın Sandık') : L('Royal Chest', 'Kraliyet Sandığı')) + '</b>' +
+          '<small>' + (k === 'gold' ? L('Gold for 2 games + stars', '2 oyuna altın + yıldız') : L('Jackpot guaranteed in ' + (ROYAL_PITY - pity) + ' opens', 'Büyük ikramiye garantisi: ' + (ROYAL_PITY - pity) + ' açılış')) + '</small>' +
+          (k === 'royal' ? '<div class="pity"><i style="width:' + pity / ROYAL_PITY * 100 + '%"></i></div>' : '') +
+          (free ? '<button class="btn green cfree" data-chest="' + k + '" data-ad="1"><span class="cfl"><span class="ad-ico">AD</span>' + L('Free', 'Bedava') + '</span><small>' + (k === 'gold' ? L('left ', 'kalan ') + (GOLD_FREE - goldDay().n) + '/' + GOLD_FREE + ' · 📺 ' + goldDay().ads + '/' + GOLD_ADS : '📺 ' + royalAds() + '/' + ROYAL_ADS) + '</small></button>'
+            : '<button class="btn ' + (d.coins >= CHEST[k].cost ? 'purple' : 'gray') + '" data-chest="' + k + '">⭐ ' + CHEST[k].cost + '</button>') + '</div>';
+      }).join('') + '</div>' +
+      // 5. Stars (the first purchase of every pack is doubled)
+      '<div class="sect"><h2>' + L('Stars', 'Yıldızlar') + '</h2></div>' +
+      '<div class="freebox">' + Art.stars(1) + '<div><b>' + L('Free stars', 'Bedava yıldız') + '</b><small>' + (left > 0 ? L(left + ' left today', 'Bugün ' + left + ' hak') : L('New ones tomorrow', 'Yarın yenilenir')) + '</small></div>' +
+        '<button class="btn green" id="starAd"' + (left > 0 ? '' : ' disabled') + '><span class="ad-ico">AD</span>+5 ⭐</button></div>' +
+      '<div class="packs">' + IAP.STAR_PACKS.map((p, i) => {
+        const x2 = IAP.firstBonus(p.id);
+        return '<button class="pack' + (i === IAP.STAR_PACKS.length - 1 ? ' best' : '') + '" data-pack="' + p.id + '">' + (p.tag ? '<em>' + p.tag + '</em>' : '') + (x2 ? '<span class="x2">x2<small>' + L('1st buy', 'ilk alım') + '</small></span>' : '') +
+          Art.stars(i + 1) + '<b>⭐ ' + Kit.fmt(p.n * (x2 ? 2 : 1)) + '</b>' + (x2 ? '<s>' + Kit.fmt(p.n) + '</s>' : '') + '<span class="price">' + IAP.priceOf(p.id) + '</span></button>';
+      }).join('') + '</div>' +
+      // 6. Ads only
+      (d.noAds ? '' : '<div class="upg"><div><b>🚫 ' + L('Remove Ads only', 'Sadece reklamları kaldır') + '</b><small>' + L('Banners and interstitials off in all games', 'Tüm oyunlarda banner ve geçiş reklamı kapanır') + '</small></div><button class="btn small" id="noads">' + IAP.priceOf('remove_ads') + '</button></div>') +
+      '<p class="note">' + L('⭐ Stars are shared by all six games: heroes, gear, skins and boosts. Everything free with an ad stays free.', '⭐ Yıldızlar altı oyunda ortak: kahraman, ekipman, skin ve güçlendirme. Reklamla bedava olan her şey bedava kalır.') + '</p>';
+  }
+  // ---------- Arrow Legends outfits ----------
+  const HERO_NAME = { rogue: () => L('Rogue', 'Haydut'), ranger: () => L('Ranger', 'Korucu'), mage: () => L('Mage', 'Büyücü'), frost: () => L('Frost Cleric', 'Buz Rahibi') };
+  const RAR_C = { rare: '#3b8cff', epic: '#b05cff', legendary: '#ffb12a', mythic: '#ff4d5a' };
+  const RAR_N = { rare: () => L('Rare', 'Nadir'), epic: () => L('Epic', 'Epik'), legendary: () => L('Legendary', 'Efsanevi'), mythic: () => L('Mythic', 'Mitik') };
+  const FX_N = { embers: () => L('Rising embers', 'Yükselen korlar'), smoke: () => L('Shadow smoke', 'Gölge dumanı'), leaves: () => L('Falling leaves', 'Süzülen yapraklar'),
+    fireflies: () => L('Fireflies', 'Ateş böcekleri'), sparkle: () => L('Golden sparkle', 'Altın parıltı'), sparks: () => L('Crackling sparks', 'Çatırdayan kıvılcım'),
+    orbs: () => L('Orbiting orbs', 'Dönen küreler'), snow: () => L('Snowfall', 'Kar yağışı'), stars: () => L('Stardust', 'Yıldız tozu') };
+  const TOP_N = { crown: () => L('floating crown', 'süzülen taç'), halo: () => L('halo', 'hale'), horns: () => L('glowing horns', 'parlayan boynuzlar') };
+  const arrowG = () => { const d = Save.load(); return d.games.arrow || {}; };
+  const ownsOutfit = (h, id) => (arrowG().outfits || []).includes(h + '.' + id);
+  // Absolute URL: the portrait goes into a CSS variable, and a relative url() there would resolve against ui.css.
+  const skinUrl = (h, id) => new URL('ortak/img/skins/' + h + '-' + id + '.webp', location.href).href;
+  function outfitShop() {
+    if (!window.ArrowSkins) return '';
+    const list = [];
+    for (const h in ArrowSkins.SKINS) for (const s of ArrowSkins.SKINS[h]) list.push([h, s]);
+    // Not owned first, the rarest first among them.
+    const ord = { mythic: 0, legendary: 1, epic: 2, rare: 3 };
+    list.sort((a, b) => ownsOutfit(a[0], a[1].id) - ownsOutfit(b[0], b[1].id) || ord[a[1].rar] - ord[b[1].rar]);
+    return '<div class="sect"><h2>👘 ' + L('Hero outfits', 'Kahraman kıyafetleri') + ' <small class="tmr">Arrow Legends</small></h2></div>' +
+      '<div class="outfits">' + list.map(([h, s]) => {
+        const own = ownsOutfit(h, s.id);
+        return '<button class="ofit r-' + s.rar + (own ? ' own' : '') + '" style="--rc:' + RAR_C[s.rar] + ';--img:url(' + skinUrl(h, s.id) + ')" data-outfit="' + h + '.' + s.id + '">' +
+          '<span class="opic"></span><b>' + s.name() + '</b><small>' + HERO_NAME[h]() + '</small>' +
+          '<span class="oprice">' + (own ? '✓ ' + L('Owned', 'Sende') : s.ads ? '📺 ' + L('Ads', 'Reklam') : '⭐ ' + s.cost) + '</span></button>';
+      }).join('') + '</div>';
+  }
+  // Preview sheet: the portrait turns by itself; dragging sideways spins it by hand.
+  function outfitSheet(key) {
+    const [h, id] = key.split('.'), s = ArrowSkins.find(h, id); if (!s) return;
+    const g = arrowG(), heroOwned = (g.heroes || ['rogue']).includes(h), own = ownsOutfit(h, id), d = Save.load();
+    const desc = FX_N[s.fx.kind]() + (s.fx.top ? ' + ' + TOP_N[s.fx.top]() : '') + (s.glow || s.cracks ? ' · ' + L('glowing outfit', 'parlayan kıyafet') : '');
+    show('<div class="rays"></div><div class="ribbon" style="--rc:' + RAR_C[s.rar] + '">' + s.name() + '</div>' +
+      '<div class="ospin r-' + s.rar + '" style="--rc:' + RAR_C[s.rar] + ';--img:url(' + skinUrl(h, id) + ')"><i></i></div>' +
+      '<p class="sub"><b style="color:' + RAR_C[s.rar] + '">' + RAR_N[s.rar]() + '</b> · ' + HERO_NAME[h]() + '<br>' + desc + '</p>' +
+      (own ? '<button class="btn gray" disabled>✓ ' + L('Owned · wear it in Arrow Legends', 'Sende · Arrow Legends\'ta giy') + '</button>'
+        : !heroOwned ? '<button class="btn gray" disabled>🔒 ' + L('Unlock the ' + HERO_NAME[h]() + ' in Arrow Legends first', 'Önce Arrow Legends\'ta ' + HERO_NAME[h]() + ' kahramanını aç') + '</button>'
+        : s.ads ? '<a class="btn purple" href="arrow-legends/index.html" style="text-decoration:none"><span class="ad-ico">AD</span>' + L('Unlock with ads in Arrow Legends', 'Arrow Legends\'ta reklamla aç') + '</a>'
+        : '<button class="btn big ' + (d.coins >= s.cost ? 'gold pulse' : 'gray') + '" data-obuy="' + key + '">' + L('Get outfit', 'Kıyafeti al') + ' · ⭐ ' + s.cost + '</button>') +
+      '<button class="btn gray" data-close="1">' + L('Close', 'Kapat') + '</button>');
+    const sp = document.querySelector('.ospin'); let f = 0, auto = true, x0 = null;
+    const N = 24, set = () => { sp.style.backgroundPosition = (f / (N - 1) * 100) + '% 0'; };
+    const tick = () => { if (!sp.isConnected) return; if (auto) { f = (f + 1) % N; set(); } setTimeout(tick, 90); }; tick();
+    sp.addEventListener('pointerdown', e => { x0 = e.clientX; auto = false; sp.setPointerCapture && sp.setPointerCapture(e.pointerId); });
+    sp.addEventListener('pointermove', e => { if (x0 == null) return; const st = Math.round((e.clientX - x0) / 9); if (st) { f = ((f - st) % N + N) % N; x0 = e.clientX; set(); } });
+    sp.addEventListener('pointerup', () => { x0 = null; setTimeout(() => { auto = true; }, 1200); });
+  }
+  function buyOutfit(key) {
+    const [h, id] = key.split('.'), s = ArrowSkins.find(h, id), d = Save.load(), g = d.games.arrow || (d.games.arrow = {});
+    if (!s || s.ads || ownsOutfit(h, id) || !(g.heroes || ['rogue']).includes(h)) return;
+    if (!Save.spend(s.cost)) { UI.toast(L('Not enough ⭐ stars', 'Yetersiz ⭐ yıldız')); return; }
+    g.outfits = (g.outfits || []).concat(key); g.outfit = Object.assign({}, g.outfit, { [h]: id }); Save.save(); Sfx.play('coin'); hide();
+    Fx.reveal({ title: s.name() + L(' unlocked!', ' açıldı!'), items: [{ icon: '<span class="rwskin" style="--img:url(' + skinUrl(h, id) + ')"></span>', label: s.name(), sub: HERO_NAME[h](), rarity: s.rar }] }).then(render);
+  }
+  function oddsSheet() {
+    show('<div class="ribbon">' + L('Chest odds', 'Sandık olasılıkları') + '</div><div class="settings" style="display:flex;flex-direction:column;gap:6px;text-align:left">' +
+      '<div class="upg"><div><b>' + L('Golden Chest', 'Altın Sandık') + '</b><small>' + L('Gold for 2 random games: 100% · 3–8 ⭐: 90% · 25 ⭐ jackpot: 10%', '2 rastgele oyuna altın: %100 · 3–8 ⭐: %90 · 25 ⭐ büyük ikramiye: %10') + '</small></div></div>' +
+      '<div class="upg"><div><b>' + L('Royal Chest', 'Kraliyet Sandığı') + '</b><small>' + L('Gold for every game: 100% · 20–50 ⭐: 75% · 100 ⭐ jackpot: 25% · the 10th open without a jackpot always gives it', 'Tüm oyunlara altın: %100 · 20–50 ⭐: %75 · 100 ⭐ büyük ikramiye: %25 · ikramiyesiz geçen 10. açılış her zaman ikramiye verir') + '</small></div></div>' +
+      '</div><button class="btn gray" data-close="1">' + L('Close', 'Kapat') + '</button>');
+  }
+  function openChest(k) {
+    const gold = k === 'gold', lines = [], d = Save.load();
+    const picks = gold ? GOLD_GAMES.slice().sort(() => Math.random() - 0.5).slice(0, 2) : GOLD_GAMES;
+    for (const id of picks) {
+      const gm = d.games[id] || (d.games[id] = {}), lv = lvOf(id);
+      if (gm.gold == null) gm.gold = 400 + 60 * lv;
+      const amt = Math.round((gold ? 80 + 25 * lv : 220 + 60 * lv) * (0.8 + Math.random() * 0.5));
+      gm.gold += amt;
+      lines.push({ r: gold ? 'rare' : 'epic', icon: '💰', n: '+' + Kit.fmt(amt), sub: gameName(id) });
+    }
+    // Royal chests: a visible pity counter guarantees the jackpot on the 10th open without one.
+    let jackpot = Math.random() < (gold ? 0.1 : 0.25);
+    if (!gold) { d.pity = (d.pity || 0) + 1; if (d.pity >= ROYAL_PITY) jackpot = true; if (jackpot) d.pity = 0; }
+    const stars = gold ? (jackpot ? 25 : 3 + Math.floor(Math.random() * 6)) : (jackpot ? 100 : 20 + Math.floor(Math.random() * 31));
+    Save.addCoins(stars);
+    lines.push({ r: jackpot ? 'legendary' : gold ? 'common' : 'epic', icon: '⭐', n: '+' + stars, sub: jackpot ? L('JACKPOT!', 'BÜYÜK İKRAMİYE!') : L('Stars', 'Yıldız') });
+    Save.save();
+    Ads.track('chest_open', { kind: k });
+    return Fx.reveal({ title: gold ? L('Golden Chest', 'Altın Sandık') : L('Royal Chest', 'Kraliyet Sandığı'), chest: k,
+      items: lines.map(x => ({ icon: x.icon, label: x.n, sub: x.sub, rarity: x.r })) }).then(render);
+  }
+
+  // ---------- Rewards page ----------
+  function renderRewards() {
+    const st = Save.dailyStatus(), shownDay = st.available ? st.day : st.day + 1;
+    const cyc = Math.floor((shownDay - 1) / 7) * 7; // first day of the visible week
+    const p = player(), tt = PlayerLv.title(p.lv), nt = PlayerLv.nextTitle(p.lv), pend = PlayerLv.pending(), bonus = Math.round((PlayerLv.mul() - 1) * 100);
+    const pendStars = pend.reduce((a, k) => a + PlayerLv.reward(k).stars, 0), pendChests = pend.filter(k => PlayerLv.reward(k).chest).length;
+    $('rewards').innerHTML =
+      '<div class="sect"><h2>' + L('Player level', 'Oyuncu seviyesi') + '</h2></div>' +
+      '<div class="plvcard" style="--tc:' + tt.color + '"><div class="plvb">' + p.lv + '</div><div class="plvt"><b>' + tt.name + '</b>' +
+        '<div class="xpb"><i style="width:' + Math.round(p.pct * 100) + '%"></i></div>' +
+        '<small>' + L('Levels come from progress in every game.', 'Seviye bütün oyunlardaki ilerlemenden gelir.') + '</small></div></div>' +
+      '<div class="plvperks"><div><b>💰 +%' + bonus + '</b><small>' + L('gold in all games', 'tüm oyunlarda altın') + '</small></div>' +
+        '<div><b>⭐ +' + PlayerLv.reward(p.lv + 1).stars + '</b><small>' + L('at the next level', 'sonraki seviyede') + '</small></div>' +
+        '<div><b>' + (nt ? '🏅 ' + nt.at : '👑') + '</b><small>' + (nt ? L('title: ', 'unvan: ') + nt.name : L('top title', 'en üst unvan')) + '</small></div></div>' +
+      (pend.length ? '<button class="btn gold pulse" data-plv="1">🎁 ' + L('Claim level rewards', 'Seviye ödüllerini al') + ' · +' + pendStars + ' ⭐' + (pendChests ? ' + ' + pendChests + ' 🎁' : '') + '</button>' : '<p class="tip">' + L('Level up in any game for the next reward. Every 5 levels: a Royal Chest and a new title.', 'Herhangi bir oyunda ilerle, sonraki ödül gelsin. Her 5 seviyede: Kraliyet Sandığı ve yeni unvan.') + '</p>') +
+      '<div class="sect"><h2>' + L('Daily login', 'Günlük giriş') + '</h2></div>' +
+      '<div class="cal">' + DAILY.map((amt, i) => {
+        const dn = cyc + i + 1, got = dn < (st.available ? st.day : st.day + 1), isToday = st.available && dn === st.day;
+        return '<div class="day' + (i === 6 ? ' big' : '') + (got ? ' got' : '') + (isToday ? ' today' : '') + '"' + (isToday ? ' data-daily="1"' : '') + '><small>' + L('Day ', 'Gün ') + dn + '</small><div class="di">' + (i === 6 ? '🎁' : '⭐') + '</div><b>+' + amt + '</b></div>';
+      }).join('') + '</div>' +
+      (st.available ? '<button class="btn gold pulse" data-daily="1">🎁 ' + L('Claim day ', 'Al · gün ') + st.day + '</button>' : '<p class="tip">' + L('Come back tomorrow · streak: ', 'Yarın tekrar gel · seri: ') + st.day + L(' days', ' gün') + '</p>') +
+      '<p class="tip">' + L('Missing a day only moves your streak back 2 days.', 'Bir gün kaçırırsan serin sıfırlanmaz, sadece 2 gün geri gider.') + '</p>' +
+      '<div class="sect"><h2>' + L('Daily quests', 'Günlük görevler') + '</h2></div>' +
+      Quests.today().map((q, i) => '<div class="quest' + (q.done ? ' done' : '') + '"><span class="qi">' + (q.done ? '✅' : q.p >= q.n ? '🎉' : '📜') + '</span><div><b>' + q.text() + '</b>' +
+        '<div class="qbar"><i style="width:' + Math.round(Math.min(1, q.p / q.n) * 100) + '%"></i><span>' + Math.min(q.p, q.n) + ' / ' + q.n + '</span></div></div>' +
+        (q.done ? '<button class="btn small gray" disabled>✓</button>' : '<button class="btn small ' + (q.p >= q.n ? 'green pulse' : 'gray') + '" data-quest="' + i + '"' + (q.p >= q.n ? '' : ' disabled') + '>+' + q.stars + ' ⭐</button>') + '</div>').join('') +
+      '<div class="quest"><span class="qi">🏆</span><div><b>' + L('Finish all 3 quests', '3 görevi de bitir') + '</b><small style="font-size:12px;opacity:.8">' + L('Bonus reward', 'Bonus ödül') + '</small></div>' +
+        (Save.data.quests.bonus ? '<button class="btn small gray" disabled>✓</button>' : '<button class="btn small ' + (Quests.bonusReady() ? 'gold pulse' : 'gray') + '" data-bonus="1"' + (Quests.bonusReady() ? '' : ' disabled') + '>+10 ⭐</button>') + '</div>' +
+      '<p class="note">' + L('Quests refresh every day at midnight.', 'Görevler her gece yarısı yenilenir.') + '</p>';
+  }
+
+  // ---------- Sheets ----------
+  function show(html) {
+    // An already open sheet only swaps its content, so the pop-in animation doesn't replay on every redraw.
+    const sh = !$('ov').classList.contains('hidden') && $('ov').querySelector(':scope > .sheet');
+    if (sh) sh.innerHTML = html; else $('ov').innerHTML = '<div class="sheet">' + html + '</div>';
+    $('ov').classList.remove('hidden');
+  }
+  function hide() { $('ov').classList.add('hidden'); render(); }
+  function dailySheet() {
+    const st = Save.dailyStatus();
+    if (!st.available) return;
+    show('<div class="rays"></div><div class="ribbon">' + L('DAY ', 'GÜN ') + st.day + '</div><div class="opening">' + Art.gift() + '</div>' +
+      '<p class="sub">' + L('Come back every day and the reward grows!', 'Her gün gel, ödül büyüsün!') + '</p>' +
+      '<div class="loot"><div class="lootc r-legendary"><b>⭐</b><span>+' + st.amount + '</span></div></div>' +
+      '<button class="btn gold big pulse" data-m="2"><span class="ad-ico">AD</span>' + L('2x CLAIM', '2x AL') + ' · +' + st.amount * 2 + '</button>' +
+      '<button class="btn gray" data-m="1">' + L('Claim', 'Al') + '</button>');
+  }
+  let resetArmed = false;
+  // Profile: what the player level is, where it comes from and what it gives.
+  function profileSheet() {
+    const p = player(), tt = PlayerLv.title(p.lv), bonus = Math.round((PlayerLv.mul() - 1) * 100), nextBonus = Math.round(Math.min(50, 2 * p.lv));
+    const pend = PlayerLv.pending(), lv = id => id === 'maden' ? ((Save.load().games.maden || {}).shafts || [1]).length : lvOf(id);
+    const src = ['koloni', 'suru', 'delik', 'cag', 'arrow', 'maden'].map(id => {
+      const per = id === 'arrow' || id === 'maden' ? 3 : 1, xp = (Math.max(1, lv(id)) - 1) * per;
+      return '<div class="psrc"><span>' + gameName(id) + '</span><small>' + (id === 'arrow' ? L('chapter ', 'bölüm ') : id === 'maden' ? L('shaft ', 'kat ') : L('level ', 'seviye ')) + lv(id) + ' · ' + per + ' XP/' + (id === 'arrow' ? L('chapter', 'bölüm') : id === 'maden' ? L('shaft', 'kat') : L('level', 'seviye')) + '</small><b>' + xp + ' XP</b></div>';
+    }).join('');
+    const ladder = PlayerLv.titles().map(t => '<div class="ptl' + (p.lv >= t.at ? ' got' : '') + (t.name === tt.name ? ' now' : '') + '" style="--tc:' + t.color + '"><i></i><b>' + t.name + '</b><small>' + L('Lv. ', 'Sv. ') + t.at + '</small></div>').join('');
+    show('<div class="ribbon">' + L('Profile', 'Profil') + '</div><div class="prof">' +
+      '<div class="plvcard" style="--tc:' + tt.color + '"><div class="plvb">' + p.lv + '</div><div class="plvt"><b>' + tt.name + '</b>' +
+        '<div class="xpb"><i style="width:' + Math.round(p.pct * 100) + '%"></i></div><small>' + Math.floor(p.left) + ' / ' + p.need + ' XP · ' + L('next level', 'sonraki seviye') + '</small></div></div>' +
+      '<h4>❓ ' + L('What is the player level?', 'Oyuncu seviyesi nedir?') + '</h4>' +
+      '<p class="ptxt">' + L('Your overall rank across all games. Every level you pass in any game gives XP; enough XP raises your player level.', 'Bütün oyunlardaki genel rütben. Herhangi bir oyunda geçtiğin her seviye XP verir; XP dolunca oyuncu seviyen yükselir.') + '</p>' +
+      '<h4>🎁 ' + L('What does it give?', 'Ne kazandırır?') + '</h4>' +
+      '<div class="pperk"><b>💰 ' + L('+' + bonus + '%', '+%' + bonus) + '</b><span>' + L('more gold in every game (+2% per level, up to +50%). Next level: +' + nextBonus + '%', 'tüm oyunlarda daha fazla altın (seviye başı +%2, en fazla +%50). Sonraki seviyede: +%' + nextBonus) + '</span></div>' +
+      '<div class="pperk"><b>⭐ +' + PlayerLv.reward(p.lv + 1).stars + '</b><span>' + L('stars as a reward for the next level (grows every level)', 'sonraki seviyeye ulaşınca ödül yıldız (her seviye artar)') + '</span></div>' +
+      '<div class="pperk"><b>👑</b><span>' + L('every 5 levels a Royal Chest, a new title and a new frame colour', 'her 5 seviyede Kraliyet Sandığı, yeni unvan ve yeni çerçeve rengi') + '</span></div>' +
+      (pend.length ? '<button class="btn gold pulse" data-profclaim="1">🎁 ' + L('Level rewards waiting', 'Bekleyen seviye ödülleri') + ' (' + pend.length + ')</button>' : '') +
+      '<h4>🏅 ' + L('Titles', 'Unvanlar') + '</h4><div class="ptls">' + ladder + '</div>' +
+      '<h4>📈 ' + L('Where your XP comes from', 'XP nereden geliyor') + '</h4>' + src +
+      '</div><button class="btn gray" data-close="1">' + L('Close', 'Kapat') + '</button>');
+  }
+
+  // Offers the cloud copy (o from Cloud.fetch). manual: opened from Settings, so declining doesn't settle anything.
+  let cloudOffer = null;
+  function cloudSheet(o, manual) {
+    cloudOffer = o;
+    show('<div class="ribbon">☁️ ' + L('Cloud save found', 'Bulutta kayıt bulundu') + '</div><div class="settings" style="display:flex;flex-direction:column;gap:8px;text-align:left">' +
+      '<div class="upg"><div><b>' + L('Cloud', 'Bulut') + '</b><small>' + L('Level ', 'Seviye ') + o.lv + ' · ⭐ ' + Kit.fmt(o.coins) + ' · ' + new Date(o.t).toLocaleString(LANG, { dateStyle: 'short', timeStyle: 'short' }) + '</small></div></div>' +
+      '<div class="upg"><div><b>' + L('This device', 'Bu cihaz') + '</b><small>' + L('Level ', 'Seviye ') + PlayerLv.level() + ' · ⭐ ' + Kit.fmt(Save.load().coins || 0) + '</small></div></div>' +
+      '<p class="note">' + L('Loading replaces the progress on this device.', 'Yüklemek bu cihazdaki ilerlemenin yerine geçer.') + '</p></div>' +
+      '<button class="btn green" data-cloud="use">' + L('Load cloud save', 'Buluttan yükle') + '</button>' +
+      '<button class="btn gray" data-cloud="' + (manual ? 'cancel' : 'keep') + '">' + (manual ? L('Cancel', 'Vazgeç') : L('Keep this device', 'Bu cihazdakini kullan')) + '</button>');
+  }
+
+  function settingsSheet() {
+    show('<div class="ribbon">' + L('Settings', 'Ayarlar') + '</div><div class="settings" style="display:flex;flex-direction:column;gap:8px">' +
+      '<div class="upg" style="flex-direction:column;align-items:stretch;gap:6px"><div><b>🌐 ' + L('Language', 'Dil') + '</b></div><div class="seg" style="display:grid;grid-template-columns:1fr 1fr">' +
+        Object.keys(LANGS).map(k => '<button data-lang="' + k + '" class="' + (LANG === k ? 'on' : '') + '">' + LANGS[k] + '</button>').join('') + '</div></div>' +
+      '<div class="upg"><div><b>' + Sfx.icon() + ' ' + L('Sound', 'Ses') + '</b><small>' + Sfx.label() + '</small></div><button class="btn small" data-set="sound">' + L('Change', 'Değiştir') + '</button></div>' +
+      '<div class="upg"><div><b>📳 ' + L('Vibration', 'Titreşim') + '</b><small>' + (Save.load().vib === false ? L('Off', 'Kapalı') : L('On', 'Açık')) + '</small></div><button class="btn small" data-set="vib">' + L('Change', 'Değiştir') + '</button></div>' +
+      (Save.load().noAds ? '' : '<div class="upg"><div><b>🛒 ' + L('Purchases', 'Satın alımlar') + '</b></div><button class="btn small" data-set="restore">' + L('Restore', 'Geri yükle') + '</button></div>') +
+      (Cloud.available() ? '<div class="upg"><div><b>☁️ ' + L('Cloud save', 'Bulut kaydı') + '</b><small>' +
+        (Cloud.signedIn() ? (Cloud.lastBackup() ? L('Last backup: ', 'Son yedek: ') + new Date(Cloud.lastBackup()).toLocaleString(LANG, { dateStyle: 'short', timeStyle: 'short' }) : L('Saved automatically when you leave the app', 'Uygulamadan çıkınca otomatik yedeklenir'))
+          : L('Sign in with Google Play Games', 'Google Play Games ile giriş yap')) + '</small></div>' +
+        (Cloud.signedIn() ? '<div style="display:flex;gap:6px"><button class="btn small" data-set="cloudUp">' + L('Back up', 'Yedekle') + '</button><button class="btn small" data-set="cloudDown">' + L('Restore', 'Geri yükle') + '</button></div>'
+          : '<button class="btn small" data-set="cloudIn">' + L('Sign in', 'Giriş yap') + '</button>') + '</div>' : '') +
+      (Ads.privacyRequired() ? '<div class="upg"><div><b>🔒 ' + L('Ad privacy', 'Reklam gizliliği') + '</b></div><button class="btn small" data-set="privacyOpts">' + L('Open', 'Aç') + '</button></div>' : '') +
+      '<div class="upg"><div><b>📄 ' + L('Privacy policy', 'Gizlilik politikası') + '</b></div><a class="btn small" href="gizlilik.html" style="text-decoration:none">' + L('Open', 'Aç') + '</a></div>' +
+      '<div class="upg"><div><b>🗑️ ' + L('Reset progress', 'Kaydı sıfırla') + '</b></div><button class="btn small red" data-set="reset">' + (resetArmed ? L('Sure? Tap again', 'Emin misin? Tekrar bas') : L('Reset', 'Sıfırla')) + '</button></div>' +
+      '</div><button class="btn gray" data-close="1">' + L('Close', 'Kapat') + '</button>');
+  }
+
+  $('ov').onclick = async e => {
+    const t = e.target;
+    if (forceUpd && !t.closest('[data-close]')) return;
+    if (t === $('ov') || t.closest('[data-close]')) { resetArmed = false; hide(); return; }
+    if (t.closest('[data-profclaim]')) { hide(); setTab('rewards'); return; }
+    const ob = t.closest('[data-obuy]'); if (ob) { buyOutfit(ob.dataset.obuy); return; }
+    const m = t.closest('[data-m]');
+    if (m) {
+      const mult = +m.dataset.m;
+      if (mult === 2 && !(await Ads.rewarded('daily_x2'))) { UI.toast(L('Ad not completed', 'Reklam tamamlanmadı')); return; }
+      const got = Save.claimDaily(mult);
+      hide();
+      if (got) { UI.toast('+' + got + ' ⭐'); Sfx.play('coin'); }
+      return;
+    }
+    const lang = t.closest('[data-lang]');
+    if (lang) { if (lang.dataset.lang !== LANG) { Save.setLang(lang.dataset.lang); location.reload(); } return; }
+    const cl = t.closest('[data-cloud]');
+    if (cl) {
+      const k = cl.dataset.cloud;
+      if (k === 'use' && cloudOffer) { Cloud.restore(cloudOffer); return; }
+      if (k === 'keep') { Cloud.decided(); Cloud.backup(false); }
+      hide(); return;
+    }
+    const s = t.closest('[data-set]');
+    if (!s) return;
+    const k = s.dataset.set;
+    if (k === 'sound') { UI.toast(Sfx.toggle()); settingsSheet(); }
+    else if (k === 'vib') { const d = Save.load(); d.vib = d.vib === false; Save.save(); if (d.vib) Sfx.buzz('win'); settingsSheet(); }
+    else if (k === 'restore') { await restore(); settingsSheet(); }
+    else if (k === 'cloudIn') { if (!(await Cloud.signIn())) UI.toast(L('Sign-in failed', 'Giriş yapılamadı')); settingsSheet(); }
+    else if (k === 'cloudUp') { const ok = await Cloud.backup(true); UI.toast(ok ? L('Backed up to the cloud ✓', 'Buluta yedeklendi ✓') : L('Backup failed', 'Yedekleme başarısız')); settingsSheet(); }
+    else if (k === 'cloudDown') { const o = await Cloud.fetch(); if (o) cloudSheet(o, true); else UI.toast(L('No cloud save yet', 'Bulutta kayıt yok')); }
+    else if (k === 'privacyOpts') Ads.privacyOptions();
+    else if (k === 'reset') {
+      if (!resetArmed) { resetArmed = true; settingsSheet(); return; }
+      resetArmed = false; Save.reset(); hide(); UI.toast(L('Progress reset', 'Kayıt sıfırlandı'));
+    }
+  };
+
+  // Page clicks (shop / rewards / strips).
+  document.querySelector('.pages').addEventListener('click', async e => {
+    const t = e.target;
+    const go = t.closest('[data-go]'); if (go) { setTab(go.dataset.go); return; }
+    if (t.closest('[data-daily]')) { dailySheet(); return; }
+    if (t.closest('[data-plv]')) {
+      const r = PlayerLv.claim(); if (!r) return;
+      const items = [{ icon: '⭐', label: '+' + r.stars, sub: L('Levels ', 'Seviye ') + r.levels[0] + (r.levels.length > 1 ? '–' + r.levels[r.levels.length - 1] : ''), rarity: 'legendary' }];
+      await Fx.reveal({ title: L('LEVEL REWARDS', 'SEVİYE ÖDÜLLERİ'), items });
+      for (let k = 0; k < r.chests; k++) await openChest('royal');
+      render(); return;
+    }
+    const q = t.closest('[data-quest]');
+    if (q) { const n = Quests.claim(+q.dataset.quest); if (n) { UI.toast('+' + n + ' ⭐'); Sfx.play('coin'); } render(); return; }
+    if (t.closest('[data-bonus]')) { const n = Quests.claimBonus(); if (n) { UI.toast('+' + n + ' ⭐'); Sfx.play('coin'); } render(); return; }
+    const c = t.closest('[data-chest]');
+    if (c) {
+      const k = c.dataset.chest, d = Save.load();
+      if (c.dataset.ad && k === 'gold') {
+        const g = goldDay(); if (g.n >= GOLD_FREE) return;
+        if (!(await Ads.short('chest_gold'))) { UI.toast(L('No ad right now, try again soon', 'Şu an reklam yok, birazdan tekrar dene')); return; }
+        g.ads++; Save.save();
+        if (g.ads < GOLD_ADS) { UI.toast(L('Ad ', 'Reklam ') + g.ads + '/' + GOLD_ADS + L(' · one more!', ' · bir tane daha!')); render(); return; }
+        g.ads = 0; g.n++; Save.save();
+      } else if (c.dataset.ad) {
+        if (!(await Ads.rewarded('chest_' + k))) { UI.toast(L('Ad not completed', 'Reklam tamamlanmadı')); return; }
+        if (k === 'royal') {
+          d.royalAds = { w: weekId(), n: royalAds() + 1 }; Save.save();
+          if (d.royalAds.n < ROYAL_ADS) { UI.toast(L('Ad ', 'Reklam ') + d.royalAds.n + '/' + ROYAL_ADS + L(' · keep going!', ' · devam!')); render(); return; }
+        }
+        d.chests = d.chests || {}; d.chests[k] = k === 'gold' ? today() : weekId(); Save.save();
+      } else if (!Save.spend(CHEST[k].cost)) { UI.toast(L('Not enough ⭐ stars', 'Yetersiz ⭐ yıldız')); setTab('shop'); return; }
+      openChest(k); render(); return;
+    }
+    if (t.closest('#starAd')) {
+      if (starAdsLeft() <= 0) return;
+      if (!(await Ads.rewarded('stars_ad'))) { UI.toast(L('Ad not completed', 'Reklam tamamlanmadı')); return; }
+      starAdsToday().n++; Save.addCoins(5); UI.toast('+5 ⭐'); Sfx.play('coin'); render(); return;
+    }
+    const p = t.closest('[data-pack]') || t.closest('[data-buy]');
+    if (p) { const r = await IAP.buy(p.dataset.pack || p.dataset.buy); if (r === 'unavailable') UI.toast(L('Store unavailable right now', 'Mağaza şu an kullanılamıyor')); render(); return; }
+    const dl = t.closest('[data-deal]'); if (dl) { await buyDeal(+dl.dataset.deal); render(); return; }
+    if (t.closest('[data-payout]')) { claimPayouts(); render(); return; }
+    if (t.closest('[data-odds]')) { oddsSheet(); return; }
+    const of = t.closest('[data-outfit]'); if (of) { outfitSheet(of.dataset.outfit); return; }
+    if (t.closest('#noads')) buyNoAds();
+  });
+
+  async function buyNoAds() {
+    Ads.track('iap_start', { product: 'remove_ads' });
+    const r = await IAP.buyNoAds();
+    if (r === 'unavailable') UI.toast(L('Store unavailable right now', 'Mağaza şu an kullanılamıyor'));
+    render();
+  }
+  async function restore() { const ok = await IAP.restore(); UI.toast(ok ? L('Purchase restored ✓', 'Satın alım geri yüklendi ✓') : L('Nothing to restore', 'Geri yüklenecek satın alım yok')); return ok; }
+  window.__hub = { dailySheet, buyNoAds, restore }; // test hooks (tests/sim.js)
+  // Back from a game: one short ad (paced in ads.js), after the hub has drawn.
+  setTimeout(() => Ads.backToHub(), 1200);
+
+  function setTab(t) {
+    tab = t;
+    document.querySelectorAll('.nav').forEach(b => b.classList.toggle('on', b.dataset.tab === t));
+    document.querySelectorAll('.page').forEach(p => p.classList.toggle('on', p.id === 'pg-' + t));
+    render();
+  }
+  $('nav').onclick = e => { const b = e.target.closest('[data-tab]'); if (b) { Sfx.play('click'); setTab(b.dataset.tab); } };
+  $('plus').onclick = () => setTab('shop');
+  $('settingsBtn').onclick = () => settingsSheet();
+  document.querySelector('.topbar .profile').onclick = () => profileSheet();
+
+  function render() {
+    topbar();
+    if (tab === 'play') renderPlay(); else if (tab === 'shop') renderShop(); else renderRewards();
+  }
+
+  document.addEventListener('stars', e => { Fx.reveal({ title: L('Stars added!', 'Yıldızlar eklendi!'), items: [{ icon: '⭐', label: '+' + Kit.fmt(e.detail), sub: L('Stars', 'Yıldız'), rarity: e.detail >= 500 ? 'legendary' : 'epic' }] }).then(render); render(); });
+  document.addEventListener('noads', () => { UI.toast(L('Ads removed ✓', 'Reklamlar kaldırıldı ✓')); Sfx.play('coin'); render(); });
+  document.addEventListener('iapready', render);
+  document.addEventListener('offer', e => { UI.toast(e.detail === 'starter_pack' ? L('🎁 Starter Pack: gold added to every game!', '🎁 Başlangıç Paketi: her oyuna altın eklendi!') : L('💳 Star Card active: claim your stars every day', '💳 Yıldız Kartı aktif: yıldızlarını her gün al')); render(); });
+  // Countdowns (deal reset, starter pack) tick every second while the shop is open.
+  setInterval(() => { document.querySelectorAll('[data-left]').forEach(el => { el.textContent = hms(+el.dataset.left - Date.now()); }); }, 1000);
+
+  // Android back on the hub: close an open sheet, then go back to Play, otherwise leave the app.
+  UI.onBack(() => {
+    if (!$('ov').classList.contains('hidden')) { hide(); return; }
+    if (tab !== 'play') { setTab('play'); return; }
+    UI.exitApp();
+  });
+
+  Ads.banner(true);
+  if (/^#(shop|rewards)$/.test(location.hash || '')) tab = location.hash.slice(1), setTab(tab);
+  render();
+  setTimeout(render, 1500); // consent info / store prices arrive asynchronously
+  // A newer version on Google Play (In-App Updates; Play installs only): offer it once per launch.
+  const AppUpd = window.Capacitor && Capacitor.isNativePlatform && Capacitor.isNativePlatform() && Capacitor.Plugins.AppUpdate;
+  let updInfo = null, forceUpd = false, updSheet = '';
+  if (AppUpd) setTimeout(async () => {
+    try {
+      updInfo = await AppUpd.getAppUpdateInfo();
+      if (updInfo.updateAvailability === 3) { await AppUpd.performImmediateUpdate(); return; } // resume an interrupted update
+      if (updInfo.updateAvailability !== 2) return;
+      // Updates are required: the sheet has no "Later" and cannot be closed; it reappears if the Play dialog is cancelled.
+      forceUpd = true;
+      show('<div class="ribbon">🚀 ' + L('Update available', 'Güncelleme var') + '</div><div class="settings" style="text-align:center">' +
+        '<p>' + L('A new version of Grab Rush is ready', 'Grab Rush için yeni sürüm hazır') + (updInfo.availableVersionName ? ' (' + updInfo.availableVersionName + ')' : '') + '.</p>' +
+        '<p class="note">' + L('This update is required to keep playing. Your progress is kept.', 'Oynamaya devam etmek için bu güncelleme gerekli. İlerlemen korunur.') + '</p></div>' +
+        '<button class="btn green big" data-upd="now">' + L('Update now', 'Şimdi güncelle') + '</button>');
+      updSheet = $('ov').innerHTML;
+      if (window.UI && UI.pushBack) UI.pushBack(keepUpd);
+    } catch (e) { }
+  }, 1200);
+  document.addEventListener('click', async e => {
+    if (!e.target.closest('[data-upd]') || !AppUpd) return;
+    try { if (window.Cloud) await Cloud.backup(false); } catch (x) { }
+    try { if (updInfo && updInfo.immediateUpdateAllowed) await AppUpd.performImmediateUpdate(); else await AppUpd.openAppStore(); }
+    catch (x) { try { await AppUpd.openAppStore(); } catch (y) { } }
+    // Still on the old version (dialog cancelled / came back from the store): keep the sheet up.
+    if (updSheet) { $('ov').innerHTML = updSheet; $('ov').classList.remove('hidden'); }
+  });
+  // Android back button must not dismiss it either: it stays on the modal stack and puts itself back.
+  const keepUpd = () => { if (updSheet) { $('ov').innerHTML = updSheet; $('ov').classList.remove('hidden'); } if (window.UI && UI.pushBack) UI.pushBack(keepUpd); };
+
+  // Fresh install with a better cloud copy: offer it (Play Games signs in on its own shortly after launch).
+  if (Cloud.available()) {
+    const ask = async () => { const o = await Cloud.check(); if (o && $('ov').classList.contains('hidden')) cloudSheet(o, false); return Cloud.signedIn(); };
+    setTimeout(async () => { if (!(await ask())) setTimeout(ask, 8000); }, 2500);
+  }
+})();
+</script>
+</body>
+</html>

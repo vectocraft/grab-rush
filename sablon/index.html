@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<meta name="theme-color" content="#141338">
+<title>Template Game</title>
+<link rel="stylesheet" href="../ortak/ui.css">
+<style>
+  #c3d { position: fixed; inset: 0; width: 100%; height: 100%; touch-action: none; }
+  .timer { flex: 1; text-align: center; font-family: var(--disp); font-size: 22px; text-shadow: 0 2px 0 var(--ink); }
+</style>
+</head>
+<body>
+<!-- TEMPLATE: copy this folder, rename, then follow CLAUDE.md "Yeni oyun ekleme adımları". -->
+<canvas id="c3d"></canvas>
+
+<div class="hud hidden" id="hud">
+  <div class="hud-row">
+    <button class="icon-btn" id="pauseBtn">❚❚</button>
+    <button class="icon-btn" id="soundBtn">🔊</button>
+    <div class="lvl-chip" id="lvl">Level 1</div>
+    <div class="coin-pill"><i class="coin"></i><b id="coins">0</b></div>
+  </div>
+  <div class="row" style="justify-content:center"><span class="timer" id="timer"></span></div>
+</div>
+
+<div class="overlay hidden" id="ov"></div>
+
+<!-- Script order matters: economy → cloud → iap → sound → ads → kit → fx → art → three → game files. -->
+<script src="../ortak/economy.js"></script>
+<script src="../ortak/gicons-data.js"></script>
+<script src="../ortak/gicons.js"></script>
+<script src="../ortak/cloud.js"></script>
+<script src="../ortak/iap.js"></script>
+<script src="../ortak/sound.js"></script>
+<script src="../ortak/ads.js"></script>
+<script src="../ortak/themes.js"></script>
+<script src="../ortak/kit.js"></script>
+<script src="../ortak/fx.js"></script>
+<script src="../ortak/art.js"></script>
+<script src="../ortak/lib/three.min.js"></script>
+<script src="render3d.js"></script>
+<script src="game.js"></script>
+</body>
+</html>

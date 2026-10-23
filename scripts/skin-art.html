@@ -1,0 +1,35 @@
+<!doctype html>
+<!-- Bakes the Arrow Legends outfit portraits (scripts/make-skin-art.js drives it in headless Chrome):
+     every hero in its classic look and in each outfit of arrow-legends/skins.js, 24 turntable frames of 200x250. -->
+<html><head><meta charset="utf-8"><style>body{margin:0;background:#333}canvas{display:block}</style></head>
+<body>
+<canvas id="c" width="200" height="250" style="width:200px;height:250px"></canvas>
+<script src="../ortak/lib/three.min.js"></script>
+<script src="../arrow-legends/chars.js"></script>
+<script src="../arrow-legends/props.js"></script>
+<script src="../arrow-legends/skins.js"></script>
+<script src="../arrow-legends/render3d.js"></script>
+<script>
+  const FRAMES = 24, W = 200, H = 250;
+  const MODEL = { rogue: 'rogue', ranger: 'ranger', mage: 'mage', frost: 'frost' };
+  const R = Arrow3D.init(document.getElementById('c'), { alpha: true });
+  window.bake = async () => {
+    const jobs = [];
+    for (const h in MODEL) { jobs.push([h, null]); for (const s of ArrowSkins.SKINS[h]) jobs.push([h, s]); }
+    for (const [h, s] of jobs) R.portrait(MODEL[h], s, 0); // first pass starts the texture repaints
+    await new Promise(r => setTimeout(r, 1500));
+    const out = {}, strip = document.createElement('canvas'); strip.width = W * FRAMES; strip.height = H;
+    const g = strip.getContext('2d');
+    for (const [h, s] of jobs) {
+      g.clearRect(0, 0, strip.width, strip.height);
+      for (let f = 0; f < FRAMES; f++) {
+        const url = R.portrait(MODEL[h], s, -0.35 + f / FRAMES * Math.PI * 2), img = new Image();
+        await new Promise(r => { img.onload = r; img.src = url; });
+        g.drawImage(img, f * W, 0);
+      }
+      out[h + '-' + (s ? s.id : 'base')] = strip.toDataURL('image/png');
+    }
+    return out;
+  };
+</script>
+</body></html>

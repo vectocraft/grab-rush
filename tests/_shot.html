@@ -1,0 +1,8 @@
+<!doctype html><meta name="viewport" content="width=device-width"><style>html,body{margin:0;height:100%}iframe{border:0;width:100%;height:100%}</style>
+<iframe id="f"></iframe>
+<script>
+// Temporary screenshot harness: ?p=<page>&js=<code run in the page after load>
+const q = new URLSearchParams(location.search), f = document.getElementById('f');
+if (q.get('w')) f.style.width = q.get('w') + 'px';
+f.src = q.get('p'); f.onload = () => setTimeout(() => { try { f.contentWindow.eval(q.get('js') || ''); } catch (e) { document.title = 'ERR ' + e; } }, +(q.get('wait') || 1200));
+</script>

@@ -1,0 +1,85 @@
+// Converts KayKit models (CC0, Kay Lousberg — see the LICENSE files next to them) into compact scripts:
+//   village: scripts/kaykit/*             → altin-ocagi/kaykit.js       window.KAYKIT     = { tex, models }
+//   cag:     scripts/kaykit-cag/<pack>/*  → caglar-savasi/kaykit-cag.js window.KAYKIT_CAG = { tex: { pack: png }, models }
+//            (packs: medieval / city / space; each model records the atlas it uses in .tex)
+// Each model is merged into one quantized geometry (positions Int16 in its bounding box, normals Int8,
+// UVs Uint16, indices Uint16/Uint32), base64-encoded, so the games need no glTF loader and work offline.
+// Usage: node scripts/kaykit-convert.js
+const fs = require('fs');
+const path = require('path');
+
+const COMP = { 5126: Float32Array, 5123: Uint16Array, 5125: Uint32Array, 5121: Uint8Array };
+const SIZE = { SCALAR: 1, VEC2: 2, VEC3: 3, VEC4: 4 };
+
+function read(dir, file) {
+  const g = JSON.parse(fs.readFileSync(path.join(dir, file), 'utf8'));
+  const bin = fs.readFileSync(path.join(dir, g.buffers[0].uri));
+  const acc = i => {
+    const a = g.accessors[i], bv = g.bufferViews[a.bufferView], T = COMP[a.componentType], n = SIZE[a.type];
+    const off = (bv.byteOffset || 0) + (a.byteOffset || 0);
+    return Array.from(new T(bin.buffer.slice(bin.byteOffset + off, bin.byteOffset + off + a.count * n * T.BYTES_PER_ELEMENT)));
+  };
+  // Node transforms (TRS or matrix, column-major) applied to every primitive.
+  const mul = (a, b) => { const o = new Array(16).fill(0); for (let r = 0; r < 4; r++) for (let c = 0; c < 4; c++) for (let k = 0; k < 4; k++) o[c * 4 + r] += a[k * 4 + r] * b[c * 4 + k]; return o; };
+  const trs = n => {
+    if (n.matrix) return n.matrix;
+    const [x, y, z, w] = n.rotation || [0, 0, 0, 1], [sx, sy, sz] = n.scale || [1, 1, 1], [tx, ty, tz] = n.translation || [0, 0, 0];
+    return [(1 - 2 * (y * y + z * z)) * sx, 2 * (x * y + z * w) * sx, 2 * (x * z - y * w) * sx, 0,
+      2 * (x * y - z * w) * sy, (1 - 2 * (x * x + z * z)) * sy, 2 * (y * z + x * w) * sy, 0,
+      2 * (x * z + y * w) * sz, 2 * (y * z - x * w) * sz, (1 - 2 * (x * x + y * y)) * sz, 0, tx, ty, tz, 1];
+  };
+  const P = [], N = [], U = [], I = [];
+  function visit(ni, parent) {
+    const node = g.nodes[ni], m = mul(parent, trs(node));
+    if (node.mesh != null) for (const pr of g.meshes[node.mesh].primitives) {
+      const base = P.length / 3, pos = acc(pr.attributes.POSITION), nor = acc(pr.attributes.NORMAL), uv = acc(pr.attributes.TEXCOORD_0);
+      for (let v = 0; v < pos.length / 3; v++) {
+        const [x, y, z] = [pos[v * 3], pos[v * 3 + 1], pos[v * 3 + 2]];
+        P.push(m[0] * x + m[4] * y + m[8] * z + m[12], m[1] * x + m[5] * y + m[9] * z + m[13], m[2] * x + m[6] * y + m[10] * z + m[14]);
+        const [a, b, c] = [nor[v * 3], nor[v * 3 + 1], nor[v * 3 + 2]];
+        const nx = m[0] * a + m[4] * b + m[8] * c, ny = m[1] * a + m[5] * b + m[9] * c, nz = m[2] * a + m[6] * b + m[10] * c;
+        const l = Math.hypot(nx, ny, nz) || 1; N.push(nx / l, ny / l, nz / l);
+        U.push(uv[v * 2], uv[v * 2 + 1]);
+      }
+      for (const i of acc(pr.indices)) I.push(base + i);
+    }
+    for (const c of node.children || []) visit(c, m);
+  }
+  for (const r of g.scenes[g.scene || 0].nodes) visit(r, [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]);
+  return { P, N, U, I, atlas: g.images && g.images[0] && g.images[0].uri };
+}
+
+const b64 = ta => Buffer.from(ta.buffer, ta.byteOffset, ta.byteLength).toString('base64');
+// All models of one folder into `models`; returns the folder's atlas as a data URI.
+function convertDir(dir, models, texKey) {
+  let atlas = null;
+  for (const f of fs.readdirSync(dir).filter(f => f.endsWith('.gltf')).sort()) {
+    const { P, N, U, I, atlas: a } = read(dir, f), name = f.replace(/\.gltf$/, '').replace(/^building_/, '').replace(/_blue$/, '');
+    atlas = atlas || a;
+    const min = [Infinity, Infinity, Infinity], max = [-Infinity, -Infinity, -Infinity];
+    for (let i = 0; i < P.length; i++) { min[i % 3] = Math.min(min[i % 3], P[i]); max[i % 3] = Math.max(max[i % 3], P[i]); }
+    const q = new Int16Array(P.length);
+    for (let i = 0; i < P.length; i++) { const k = i % 3, span = max[k] - min[k] || 1; q[i] = Math.round((P[i] - min[k]) / span * 65535) - 32768; }
+    const n = Int8Array.from(N, v => Math.round(v * 127));
+    const u = Uint16Array.from(U, v => Math.round(Math.min(1, Math.max(0, v)) * 65535));
+    const idx = P.length / 3 > 65535 ? Uint32Array.from(I) : Uint16Array.from(I);
+    models[name] = { min: min.map(v => +v.toFixed(4)), max: max.map(v => +v.toFixed(4)), p: b64(q), n: b64(n), u: b64(u), i: b64(idx), i32: idx instanceof Uint32Array ? 1 : 0 };
+    if (texKey) models[name].tex = texKey;
+  }
+  const png = fs.existsSync(path.join(dir, 'atlas.png')) ? 'atlas.png' : atlas;
+  return 'data:image/png;base64,' + fs.readFileSync(path.join(dir, png)).toString('base64');
+}
+function write(out, global, credit, data) {
+  fs.writeFileSync(out, '// Generated by scripts/kaykit-convert.js from ' + credit + ' (CC0, Kay Lousberg, www.kaylousberg.com).\nwindow.' + global + ' = ' + JSON.stringify(data) + ';\n');
+  console.log(global + ': ' + Object.keys(data.models).length + ' models, ' + (fs.statSync(out).size / 1024).toFixed(0) + ' KB → ' + path.relative(process.cwd(), out));
+}
+
+{ // Altın Ocağı village
+  const models = {}, tex = convertDir(path.join(__dirname, 'kaykit'), models);
+  write(path.join(__dirname, '..', 'altin-ocagi', 'kaykit.js'), 'KAYKIT', 'the KayKit Medieval Hexagon Pack', { tex, models });
+}
+{ // Çağlar Savaşı bases
+  const models = {}, tex = {};
+  for (const pack of ['medieval', 'city', 'space']) tex[pack] = convertDir(path.join(__dirname, 'kaykit-cag', pack), models, pack);
+  write(path.join(__dirname, '..', 'caglar-savasi', 'kaykit-cag.js'), 'KAYKIT_CAG', 'the KayKit Medieval Hexagon Pack, City Builder Bits and Space Base Bits', { tex, models });
+}

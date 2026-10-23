@@ -1,0 +1,1238 @@
+// 3D renderer for Arrow Legends (Three.js). World: x right, z toward the camera, y up; rooms are 26 x 42 units.
+// Characters (chars.js) are 8 pre-posed frames (run x4, attack x2, idle, dead) stored as morph targets of one
+// geometry, so poses blend smoothly. Dungeon props (props.js) are vertex-coloured and instanced. Effects are
+// pooled particles (sparks, dust, bones) fired by the game through R.fx(kind, x, z, colour, count).
+// Arrow3D.init(canvas) returns null without WebGL.
+(function () {
+  'use strict';
+  if (!window.THREE) return;
+  const T = window.THREE;
+  const RW = 13, RH = 21;
+  // Characters are drawn larger than their collision circles so they read well on a phone (bosses a bit less).
+  const VS = s => s * (s > 2 ? 1.4 : 1.85); // drawn a bit bigger than the hit circle so faces and gear read
+  const b64 = s => { const bin = atob(s), u = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) u[i] = bin.charCodeAt(i); return u.buffer; };
+
+  // ---------- Assets ----------
+  const CH = {}, PROPS = {};
+  function charGeo(name) {
+    if (CH[name]) return CH[name];
+    const u = window.ARROW_CHARS.chars[name];
+    const cx = (u.min[0] + u.max[0]) / 2, cz = (u.min[2] + u.max[2]) / 2;
+    const P = u.frames.map(f => {
+      const q = new Int16Array(b64(f.p)), p = new Float32Array(q.length);
+      for (let j = 0; j < q.length; j++) { const a = j % 3; p[j] = u.min[a] + (q[j] + 32768) / 65535 * (u.max[a] - u.min[a]) - (a === 0 ? cx : a === 2 ? cz : 0); }
+      return p;
+    });
+    // Centre on the feet of the idle pose (not the box of all poses: the crossbow and the death pose pushed the
+    // body off centre, so the hero stood beside its dais and its collision circle).
+    { const ip = P[6]; let sx = 0, sz = 0, n = 0, my = Infinity;
+      for (let j = 1; j < ip.length; j += 3) my = Math.min(my, ip[j]);
+      for (let j = 0; j < ip.length; j += 3) if (ip[j + 1] < my + 0.3) { sx += ip[j]; sz += ip[j + 2]; n++; }
+      if (n) { sx /= n; sz /= n; for (const p of P) for (let j = 0; j < p.length; j += 3) { p[j] -= sx; p[j + 2] -= sz; } } }
+    const nIdle = Float32Array.from(new Int8Array(b64(u.frames[6].n)), v => v / 127);
+    const N = u.frames.map(f => f.n ? Float32Array.from(new Int8Array(b64(f.n)), v => v / 127) : nIdle);
+    const g = new T.BufferGeometry();
+    g.setAttribute('position', new T.BufferAttribute(P[6], 3));
+    g.setAttribute('normal', new T.BufferAttribute(N[6], 3));
+    g.setAttribute('uv', new T.BufferAttribute(new Uint16Array(b64(u.u)), 2, true));
+    g.setIndex(new T.BufferAttribute(u.i32 ? new Uint32Array(b64(u.i)) : new Uint16Array(b64(u.i)), 1));
+    g.morphAttributes.position = P.map(a => new T.BufferAttribute(a, 3));
+    g.morphAttributes.normal = N.map(a => new T.BufferAttribute(a, 3));
+    g.morphTargetsRelative = false;
+    g.boundingSphere = new T.Sphere(new T.Vector3(0, 1.3, 0), 3);
+    return (CH[name] = g);
+  }
+  const TEX = {};
+  function charTex(key) {
+    if (TEX[key]) return TEX[key];
+    const img = new Image(), t = new T.Texture(img);
+    img.onload = () => { t.needsUpdate = true; };
+    img.src = window.ARROW_CHARS.tex[key];
+    t.flipY = false; if ('colorSpace' in t) t.colorSpace = T.SRGBColorSpace;
+    return (TEX[key] = t);
+  }
+  function propGeo(key) {
+    if (PROPS[key]) return PROPS[key];
+    const m = window.ARROW_PROPS[key], q = new Int16Array(b64(m.p)), p = new Float32Array(q.length);
+    const cx = (m.min[0] + m.max[0]) / 2, cz = (m.min[2] + m.max[2]) / 2;
+    for (let j = 0; j < q.length; j++) { const a = j % 3; p[j] = m.min[a] + (q[j] + 32768) / 65535 * (m.max[a] - m.min[a]) - (a === 0 ? cx : a === 1 ? m.min[1] : cz); }
+    const c8 = new Uint8Array(b64(m.c)), cf = new Float32Array(c8.length);
+    for (let j = 0; j < c8.length; j++) { const v = c8[j] / 255; cf[j] = v <= 0.04045 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4); }
+    const g = new T.BufferGeometry();
+    g.setAttribute('position', new T.BufferAttribute(p, 3)); g.setAttribute('color', new T.BufferAttribute(cf, 3));
+    g.setIndex(new T.BufferAttribute(m.i32 ? new Uint32Array(b64(m.i)) : new Uint16Array(b64(m.i)), 1));
+    g.userData = { w: m.max[0] - m.min[0], h: m.max[1] - m.min[1], d: m.max[2] - m.min[2] };
+    return (PROPS[key] = g);
+  }
+  // Small canvas textures.
+  function canvasTex(w, h, draw, repeat) {
+    const c = document.createElement('canvas'); c.width = w; c.height = h; draw(c.getContext('2d'), w, h);
+    const t = new T.CanvasTexture(c); if ('colorSpace' in t) t.colorSpace = T.SRGBColorSpace;
+    if (repeat) { t.wrapS = t.wrapT = T.RepeatWrapping; }
+    return t;
+  }
+  const radial = stops => canvasTex(64, 64, g => { const r = g.createRadialGradient(32, 32, 0, 32, 32, 32); stops.forEach(([o, c]) => r.addColorStop(o, c)); g.fillStyle = r; g.fillRect(0, 0, 64, 64); });
+
+  window.Arrow3D = {
+    init(canvas, opts) {
+      if (!window.ARROW_CHARS || !window.ARROW_PROPS) return null;
+      let renderer;
+      // opts.alpha: transparent canvas (scripts/skin-art.html bakes the outfit portraits with it).
+      try { renderer = new T.WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance', alpha: !!(opts && opts.alpha), preserveDrawingBuffer: !!(opts && opts.alpha) }); } catch (e) { return null; }
+      if (!renderer.getContext()) return null;
+      // Sharp characters: render close to the screen's real resolution (the adaptive step below drops shadows first).
+      let pr = Math.min(1.75, window.devicePixelRatio || 1); renderer.setPixelRatio(pr);
+      const maxAniso = renderer.capabilities.getMaxAnisotropy ? renderer.capabilities.getMaxAnisotropy() : 1;
+      if ('outputColorSpace' in renderer) renderer.outputColorSpace = T.SRGBColorSpace;
+      renderer.toneMapping = T.ACESFilmicToneMapping; renderer.toneMappingExposure = 1.02;
+      // Real soft shadows from the key light (one 1024 map that follows the camera) under every character and prop.
+      renderer.shadowMap.enabled = true; renderer.shadowMap.type = T.PCFSoftShadowMap;
+
+      const scene = new T.Scene();
+      const camera = new T.PerspectiveCamera(46, 1, 1, 400);
+      const hemi = new T.HemisphereLight(0xc8d2ff, 0x3a2414, 0.5); scene.add(hemi);
+      const sun = new T.DirectionalLight(0xffdcb0, 2.1); sun.position.set(-20, 60, 30); scene.add(sun, sun.target);
+      sun.castShadow = true; sun.shadow.mapSize.set(1024, 1024); sun.shadow.bias = -0.0008; sun.shadow.normalBias = 0.04; sun.shadow.radius = 3;
+      Object.assign(sun.shadow.camera, { left: -17, right: 17, top: 19, bottom: -19, near: 10, far: 140 }); sun.shadow.camera.updateProjectionMatrix();
+      const aimSun = (x, z) => { sun.position.set(x - 18, 58, z + 26); sun.target.position.set(x, 0, z); sun.target.updateMatrixWorld(); };
+      const rim = new T.DirectionalLight(0x7fa8ff, 0.6); rim.position.set(25, 30, -60); scene.add(rim);
+      const torchL = new T.PointLight(0xffb060, 40, 22, 1.7), torchR = torchL.clone(), torchL2 = torchL.clone(), torchR2 = torchL.clone();
+      scene.add(torchL, torchR); // torchL2/torchR2 kept as objects (positions are set) but not lit: four point lights cost too much on phones
+      scene.fog = new T.Fog(0x1a1410, 60, 140);
+
+      const propMat = new T.MeshLambertMaterial({ vertexColors: true, flatShading: true });
+      // Instanced props get their own material + shadow depth material: sharing one between InstancedMesh and Mesh makes
+      // three.js re-select the shader program for every draw (getParameters/getProgramCacheKey each frame).
+      const propMatI = propMat.clone(), instDepth = new T.MeshDepthMaterial({ depthPacking: T.RGBADepthPacking });
+      const basic = {};
+      const bmat = (c, o) => { const k = c + (o ? JSON.stringify(o) : ''); return basic[k] || (basic[k] = new T.MeshBasicMaterial(Object.assign({ color: c }, o || {}))); };
+      const add = { transparent: true, depthWrite: false, blending: T.AdditiveBlending };
+      const shadowTex = radial([[0, 'rgba(0,0,0,.38)'], [1, 'rgba(0,0,0,0)']]);
+      const glowTex = radial([[0, 'rgba(255,255,255,1)'], [0.25, 'rgba(255,255,255,.6)'], [1, 'rgba(255,255,255,0)']]);
+      const dotTex = radial([[0, 'rgba(255,255,255,1)'], [0.4, 'rgba(255,255,255,.8)'], [1, 'rgba(255,255,255,0)']]);
+      const shadowGeo = new T.PlaneGeometry(1, 1).rotateX(-Math.PI / 2), shadowMat = new T.MeshBasicMaterial({ map: shadowTex, transparent: true, depthWrite: false });
+      // Skill-effect textures, drawn once: a frost rune circle, a soft shockwave ring and a telegraph ring.
+      const frostTex = canvasTex(256, 256, g => {
+        const c = 128, rg = g.createRadialGradient(c, c, 0, c, c, 128);
+        [[0, 'rgba(120,200,255,.32)'], [0.68, 'rgba(70,160,255,.16)'], [0.84, 'rgba(190,240,255,.8)'], [0.89, 'rgba(255,255,255,1)'], [0.94, 'rgba(140,210,255,.45)'], [1, 'rgba(0,0,0,0)']].forEach(([o, col]) => rg.addColorStop(o, col));
+        g.fillStyle = rg; g.fillRect(0, 0, 256, 256); g.strokeStyle = 'rgba(230,250,255,.9)'; g.lineCap = 'round';
+        for (let k = 0; k < 6; k++) {
+          const a = k / 6 * Math.PI * 2; g.lineWidth = 4; g.beginPath(); g.moveTo(c + Math.cos(a) * 18, c + Math.sin(a) * 18); g.lineTo(c + Math.cos(a) * 92, c + Math.sin(a) * 92); g.stroke();
+          g.lineWidth = 3;
+          for (const t of [0.45, 0.7]) { const px = c + Math.cos(a) * 92 * t, py = c + Math.sin(a) * 92 * t; for (const s of [-1, 1]) { const b = a + s * 0.6; g.beginPath(); g.moveTo(px, py); g.lineTo(px + Math.cos(b) * 18, py + Math.sin(b) * 18); g.stroke(); } }
+        }
+        g.lineWidth = 2; for (let k = 0; k < 36; k++) { const a = k / 36 * Math.PI * 2, o = k % 3 ? 108 : 118; g.beginPath(); g.moveTo(c + Math.cos(a) * 102, c + Math.sin(a) * 102); g.lineTo(c + Math.cos(a) * o, c + Math.sin(a) * o); g.stroke(); }
+      });
+      const shockTex = radial([[0, 'rgba(255,255,255,0)'], [0.62, 'rgba(255,255,255,0)'], [0.82, 'rgba(255,255,255,.55)'], [0.9, 'rgba(255,255,255,1)'], [0.95, 'rgba(255,255,255,.5)'], [1, 'rgba(255,255,255,0)']]);
+      const warnTex = canvasTex(128, 128, g => {
+        const rg = g.createRadialGradient(64, 64, 0, 64, 64, 64);
+        [[0, 'rgba(255,255,255,.10)'], [0.78, 'rgba(255,255,255,.26)'], [0.86, 'rgba(255,255,255,1)'], [0.94, 'rgba(255,255,255,1)'], [1, 'rgba(255,255,255,0)']].forEach(([o, col]) => rg.addColorStop(o, col));
+        g.fillStyle = rg; g.fillRect(0, 0, 128, 128);
+        g.fillStyle = 'rgba(255,255,255,.9)'; for (let k = 0; k < 4; k++) { g.save(); g.translate(64, 64); g.rotate(k * Math.PI / 2); g.beginPath(); g.moveTo(-6, -40); g.lineTo(6, -40); g.lineTo(0, -30); g.fill(); g.restore(); } // inward chevrons
+      });
+      // Ground zones (flame trail, poison pools): a cloudy, uneven patch instead of a plain glowing disc.
+      const zoneTex = canvasTex(128, 128, g => {
+        let s = 7; const rn = () => { s = (s * 16807) % 2147483647; return s / 2147483647; };
+        for (let k = 0; k < 14; k++) { const a = rn() * 6.28, d = rn() * 34, x = 64 + Math.cos(a) * d, y = 64 + Math.sin(a) * d, r = 16 + rn() * 22, rg = g.createRadialGradient(x, y, 0, x, y, r);
+          rg.addColorStop(0, 'rgba(255,255,255,' + (0.35 + rn() * 0.3).toFixed(2) + ')'); rg.addColorStop(1, 'rgba(255,255,255,0)'); g.fillStyle = rg; g.fillRect(0, 0, 128, 128); }
+        g.globalCompositeOperation = 'destination-out';
+        for (let k = 0; k < 9; k++) { const x = 30 + rn() * 68, y = 30 + rn() * 68, r = 3 + rn() * 7; g.beginPath(); g.arc(x, y, r, 0, 7); g.fillStyle = 'rgba(0,0,0,.45)'; g.fill(); } // bubbles / holes
+      });
+      const heroPoolTex = radial([[0, 'rgba(255,255,255,1)'], [0.45, 'rgba(255,255,255,.45)'], [1, 'rgba(255,255,255,0)']]);
+      const ringTex = canvasTex(64, 64, g => { g.strokeStyle = '#fff'; g.lineWidth = 5; g.beginPath(); g.arc(32, 32, 26, 0, 7); g.stroke(); g.globalAlpha = 0.25; g.fillStyle = '#fff'; g.fill(); });
+      // Royal runner: woven fabric (neutral, the chapter colour tints it), gold-braided borders and a repeating
+      // medallion pattern, slightly worn toward the edges.
+      const carpetTex = canvasTex(128, 512, (g, w, h) => {
+        g.fillStyle = '#d6cfc8'; g.fillRect(0, 0, w, h);
+        for (let y = 0; y < h; y += 2) { g.fillStyle = 'rgba(0,0,0,' + (0.03 + Math.random() * 0.04).toFixed(3) + ')'; g.fillRect(0, y, w, 1); } // weave
+        for (let k = 0; k < 1400; k++) { g.fillStyle = Math.random() < 0.5 ? 'rgba(255,255,255,.07)' : 'rgba(0,0,0,.07)'; g.fillRect(Math.random() * w, Math.random() * h, 1 + Math.random() * 2, 1); }
+        const gold = '#f4c75a', goldD = '#8a5a12';
+        for (const x of [6, w - 18]) { g.fillStyle = goldD; g.fillRect(x - 1, 0, 14, h); g.fillStyle = gold; g.fillRect(x, 0, 12, h);
+          g.fillStyle = 'rgba(255,255,255,.45)'; g.fillRect(x + 2, 0, 2, h); g.fillStyle = goldD; for (let y = 0; y < h; y += 10) g.fillRect(x + 4, y, 4, 4); } // braid studs
+        g.fillStyle = 'rgba(0,0,0,.35)'; g.fillRect(22, 0, 3, h); g.fillRect(w - 25, 0, 3, h);
+        for (let y = 64; y < h; y += 128) { // medallion
+          const cx = w / 2;
+          g.fillStyle = 'rgba(70,30,10,.35)'; g.beginPath(); g.moveTo(cx, y - 46); g.lineTo(cx + 34, y); g.lineTo(cx, y + 46); g.lineTo(cx - 34, y); g.fill();
+          g.strokeStyle = gold; g.lineWidth = 4; g.beginPath(); g.moveTo(cx, y - 40); g.lineTo(cx + 28, y); g.lineTo(cx, y + 40); g.lineTo(cx - 28, y); g.closePath(); g.stroke();
+          g.fillStyle = gold; g.beginPath(); g.arc(cx, y, 9, 0, 7); g.fill(); g.fillStyle = goldD; g.beginPath(); g.arc(cx, y, 4, 0, 7); g.fill();
+          for (const d of [-1, 1]) { g.beginPath(); g.arc(cx, y + d * 64, 5, 0, 7); g.fillStyle = gold; g.fill(); }
+        }
+        const edge = g.createLinearGradient(0, 0, w, 0); edge.addColorStop(0, 'rgba(0,0,0,.25)'); edge.addColorStop(0.12, 'rgba(0,0,0,0)'); edge.addColorStop(0.88, 'rgba(0,0,0,0)'); edge.addColorStop(1, 'rgba(0,0,0,.25)');
+        g.fillStyle = edge; g.fillRect(0, 0, w, h);
+      }, true);
+      const aoTex = canvasTex(64, 128, (g, w, h) => {
+        const e = (x0, y0, x1, y1) => { const r = g.createLinearGradient(x0, y0, x1, y1); r.addColorStop(0, 'rgba(10,6,4,.62)'); r.addColorStop(1, 'rgba(10,6,4,0)'); g.fillStyle = r; g.fillRect(0, 0, w, h); };
+        e(0, 0, 14, 0); e(w, 0, w - 14, 0); e(0, 0, 0, 18); e(0, h, 0, h - 10);
+      });
+      // Procedural flagstones: rows of irregular slabs, each with its own tint, a bevel, cracks and grime; a matching
+      // height map (slab = high, joint = low) drives the bump so the floor looks carved, not printed.
+      // Floors are big (two ~970x1550 canvases each): keep only the last few, and free the GPU copy of the rest —
+      // an unbounded cache ran the phone out of GPU memory in the 50-room chapters (white screen).
+      const floorCache = new Map(), FLOOR_KEEP = 3;
+      function stoneFloor(seed, base, kind) {
+        const key = seed + base + kind; if (floorCache.has(key)) return floorCache.get(key);
+        let sd = seed * 7919 + 17; const rn = () => { sd = (sd * 16807) % 2147483647; return sd / 2147483647; };
+        const PX = 36, W = (2 * RW + 2) * PX, H = (2 * RH + 2) * PX;
+        const c = document.createElement('canvas'), b = document.createElement('canvas'); c.width = b.width = W; c.height = b.height = H;
+        const g = c.getContext('2d'), h = b.getContext('2d');
+        const bc = new T.Color(base), wood = /wood/.test(kind);
+        const shade = (k, j) => { const q = bc.clone().multiplyScalar(k); q.offsetHSL((rn() - 0.5) * 0.02, (rn() - 0.5) * 0.06, (rn() - 0.5) * j); return '#' + q.getHexString(); };
+        g.fillStyle = shade(0.42, 0); g.fillRect(0, 0, W, H);           // joints
+        h.fillStyle = '#000'; h.fillRect(0, 0, W, H);
+        const gap = wood ? 3 : 5;
+        for (let y = 0; y < H;) {
+          const rh = Math.round((wood ? 0.9 : 2.4 + rn() * 1.6) * PX);
+          for (let x = -Math.round(rn() * 2 * PX); x < W;) {
+            const rw = Math.round((wood ? 4 + rn() * 5 : 2 + rn() * 3.2) * PX), r = wood ? 3 : 10 + rn() * 8;
+            const x0 = x + gap, y0 = y + gap, ww = rw - 2 * gap, hh = rh - 2 * gap;
+            const path = ctx => { ctx.beginPath(); ctx.roundRect(x0, y0, ww, hh, r); };
+            const col = shade(0.95 + rn() * 0.2, 0.08);
+            const gr = g.createLinearGradient(x0, y0, x0 + ww, y0 + hh);
+            gr.addColorStop(0, shade(1.18, 0.03)); gr.addColorStop(0.35, col); gr.addColorStop(1, shade(0.8, 0.03));
+            path(g); g.fillStyle = gr; g.fill();
+            g.lineWidth = 3; g.strokeStyle = 'rgba(255,255,255,.10)'; g.stroke();
+            // grime and moss patches, cracks
+            for (let k = 0; k < 3; k++) if (rn() < 0.5) {
+              const px = x0 + rn() * ww, py = y0 + rn() * hh, pr = (0.4 + rn() * 1.1) * PX, sp = g.createRadialGradient(px, py, 0, px, py, pr);
+              const moss = rn() < 0.35 && !wood;
+              sp.addColorStop(0, moss ? 'rgba(70,95,40,.35)' : 'rgba(30,20,12,.28)'); sp.addColorStop(1, 'rgba(0,0,0,0)');
+              g.save(); path(g); g.clip(); g.fillStyle = sp; g.fillRect(px - pr, py - pr, 2 * pr, 2 * pr); g.restore();
+            }
+            if (!wood && rn() < 0.3) {
+              g.save(); path(g); g.clip(); g.strokeStyle = 'rgba(20,12,6,.55)'; g.lineWidth = 2; g.beginPath();
+              let cx = x0 + rn() * ww, cy = y0 + rn() * hh; g.moveTo(cx, cy);
+              for (let k = 0; k < 5; k++) { cx += (rn() - 0.5) * PX * 1.2; cy += (rn() - 0.5) * PX * 1.2; g.lineTo(cx, cy); }
+              g.stroke(); g.restore();
+            }
+            if (wood) { g.save(); path(g); g.clip(); g.strokeStyle = 'rgba(40,22,10,.25)'; g.lineWidth = 1.5; for (let k = 0; k < 4; k++) { const yy = y0 + rn() * hh; g.beginPath(); g.moveTo(x0, yy); g.bezierCurveTo(x0 + ww * 0.3, yy + 4, x0 + ww * 0.7, yy - 4, x0 + ww, yy); g.stroke(); } g.restore(); }
+            // height: raised slab with a soft rounded edge
+            h.save(); path(h); h.fillStyle = '#9a9a9a'; h.fill(); h.lineWidth = 6; h.strokeStyle = '#5a5a5a'; h.stroke(); h.restore();
+            x += rw;
+          }
+          y += rh;
+        }
+        // fine speckle so large slabs are not flat colour
+        const img = g.getImageData(0, 0, W, H), d = img.data;
+        for (let k = 0; k < d.length; k += 4) { const n = (rn() - 0.5) * 18; d[k] += n; d[k + 1] += n; d[k + 2] += n; }
+        g.putImageData(img, 0, 0);
+        const map = new T.CanvasTexture(c), bump = new T.CanvasTexture(b);
+        if ('colorSpace' in map) map.colorSpace = T.SRGBColorSpace;
+        map.anisotropy = bump.anisotropy = 4;
+        floorCache.set(key, { map, bump });
+        while (floorCache.size > FLOOR_KEEP) { const [k, old] = floorCache.entries().next().value; old.map.dispose(); old.bump.dispose(); floorCache.delete(k); }
+        return floorCache.get(key);
+      }
+      // Animated liquid surface for pools: flowing lava with a cooling crust, rippling water with caustics,
+      // glossy ice with cracks and a travelling sheen. Drawn in world space so neighbouring pools never match.
+      const poolMats = {};
+      function poolMat(kind) {
+        if (poolMats[kind]) return poolMats[kind];
+        const K = { lava: 0, water: 1, ice: 2 }[kind] || 0;
+        return (poolMats[kind] = new T.ShaderMaterial({
+          transparent: K !== 0, depthWrite: K === 0,
+          uniforms: { uT: { value: 0 } },
+          vertexShader: 'varying vec2 vW; void main() { vec4 w = modelMatrix * vec4(position, 1.0); vW = w.xz; gl_Position = projectionMatrix * viewMatrix * w; }',
+          fragmentShader: [
+            'uniform float uT; varying vec2 vW;',
+            'float h(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }',
+            'float n(vec2 p) { vec2 i = floor(p), f = fract(p); f = f * f * (3.0 - 2.0 * f); return mix(mix(h(i), h(i + vec2(1, 0)), f.x), mix(h(i + vec2(0, 1)), h(i + vec2(1, 1)), f.x), f.y); }',
+            'float fbm(vec2 p) { float v = 0.0, a = 0.5; for (int i = 0; i < 5; i++) { v += a * n(p); p = p * 2.03 + 7.1; a *= 0.5; } return v; }',
+            'void main() {',
+            '  vec2 p = vW * 0.45; vec3 col; float al = 1.0;',
+            '  #if ' + K + ' == 0',
+            '  float a = fbm(p + vec2(uT * 0.10, uT * 0.06)); float b = fbm(p * 1.7 + a * 2.0 - vec2(uT * 0.12, -uT * 0.05));',
+            '  float crust = smoothstep(0.40, 0.52, b); float vein = 1.0 - smoothstep(0.0, 0.08, abs(b - 0.5));',
+            '  vec3 hot = mix(vec3(1.0, 0.78, 0.2), vec3(0.95, 0.22, 0.02), smoothstep(0.3, 0.7, a));',
+            '  col = mix(hot * (1.0 + 0.25 * sin(uT * 3.0 + a * 9.0)), vec3(0.13, 0.05, 0.03), crust) + vein * vec3(1.0, 0.55, 0.1) * crust * 0.8;',
+            '  #elif ' + K + ' == 1',
+            '  float a = fbm(p * 1.3 + vec2(uT * 0.15, uT * 0.08)); float c = fbm(p * 2.6 - vec2(uT * 0.2, uT * 0.1) + a);',
+            '  float caus = pow(1.0 - abs(c - 0.5) * 2.0, 6.0);',
+            '  col = mix(vec3(0.05, 0.32, 0.5), vec3(0.12, 0.6, 0.75), a) + caus * vec3(0.55, 0.9, 1.0) * 0.7; al = 0.88;',
+            '  #else',
+            '  float a = fbm(p * 1.1); float cr = 1.0 - smoothstep(0.0, 0.035, abs(fbm(p * 2.4 + 3.0) - 0.5));',
+            '  float sheen = smoothstep(0.85, 1.0, sin((vW.x + vW.y) * 0.35 - uT * 1.4));',
+            '  col = mix(vec3(0.62, 0.84, 0.98), vec3(0.88, 0.97, 1.0), a) - cr * vec3(0.25, 0.15, 0.05) + sheen * 0.35; al = 0.9;',
+            '  #endif',
+            '  gl_FragColor = vec4(col, al);',
+            '}'].join('\n'),
+        }));
+      }
+      const chevTex = canvasTex(64, 64, g => { g.strokeStyle = '#fff'; g.lineWidth = 9; g.lineCap = 'round'; g.beginPath(); g.moveTo(12, 44); g.lineTo(32, 22); g.lineTo(52, 44); g.stroke(); });
+      const portalTex = canvasTex(64, 128, (g, w, h) => { const r = g.createLinearGradient(0, h, 0, 0); r.addColorStop(0, 'rgba(160,255,200,.95)'); r.addColorStop(0.6, 'rgba(80,220,255,.45)'); r.addColorStop(1, 'rgba(80,220,255,0)'); g.fillStyle = r; g.fillRect(0, 0, w, h); });
+      const beamTex = canvasTex(4, 128, (g, w, h) => { const r = g.createLinearGradient(0, 0, 0, h); r.addColorStop(0, 'rgba(255,240,200,0)'); r.addColorStop(0.5, 'rgba(255,240,200,.55)'); r.addColorStop(1, 'rgba(255,240,200,.05)'); g.fillStyle = r; g.fillRect(0, 0, w, h); });
+      const trailTex = canvasTex(8, 64, (g, w, h) => { const r = g.createLinearGradient(0, 0, 0, h); r.addColorStop(0, 'rgba(255,255,255,0)'); r.addColorStop(1, 'rgba(255,255,255,.9)'); g.fillStyle = r; g.fillRect(0, 0, w, h); });
+
+      const poolTex = {
+        water: canvasTex(64, 64, g => { g.fillStyle = '#1f7fae'; g.fillRect(0, 0, 64, 64); g.strokeStyle = 'rgba(190,240,255,.45)'; g.lineWidth = 2; for (let y = 6; y < 64; y += 12) { g.beginPath(); g.moveTo(0, y); g.bezierCurveTo(16, y - 5, 40, y + 5, 64, y); g.stroke(); } }, true),
+        lava: canvasTex(128, 128, (g, w) => {
+          const bg = g.createLinearGradient(0, 0, w, w); bg.addColorStop(0, '#ffd34a'); bg.addColorStop(0.5, '#ff7a14'); bg.addColorStop(1, '#ffb02a');
+          g.fillStyle = bg; g.fillRect(0, 0, w, w);
+          // Crust plates on a jittered grid, drawn 9 times so they tile seamlessly.
+          let sd = 7; const rn = () => { sd = (sd * 16807) % 2147483647; return sd / 2147483647; };
+          const plates = [];
+          for (let i = 0; i < 5; i++) for (let j = 0; j < 5; j++) plates.push([(i + 0.2 + rn() * 0.6) * w / 5, (j + 0.2 + rn() * 0.6) * w / 5, 9 + rn() * 7, rn() * 6]);
+          for (const [px, py, pr, ph] of plates) for (const ox of [-w, 0, w]) for (const oy of [-w, 0, w]) {
+            g.beginPath();
+            for (let k = 0; k < 7; k++) { const a = ph + k / 7 * Math.PI * 2, rr = pr * (0.8 + 0.35 * Math.sin(k * 2.3 + ph)); g.lineTo(px + ox + Math.cos(a) * rr, py + oy + Math.sin(a) * rr); }
+            g.closePath();
+            const cg = g.createRadialGradient(px + ox, py + oy, 1, px + ox, py + oy, pr); cg.addColorStop(0, '#2a120a'); cg.addColorStop(0.75, '#4a1c0c'); cg.addColorStop(1, '#a8350a');
+            g.fillStyle = cg; g.fill();
+          }
+        }, true),
+        ice: canvasTex(64, 64, g => { g.fillStyle = '#bfe9ff'; g.fillRect(0, 0, 64, 64); g.strokeStyle = 'rgba(255,255,255,.8)'; g.lineWidth = 1.5; for (let k = 0; k < 6; k++) { g.beginPath(); g.moveTo(Math.random() * 64, Math.random() * 64); g.lineTo(Math.random() * 64, Math.random() * 64); g.stroke(); } }, true),
+      };
+      // Ambient particles per theme: colour, size, vertical speed, sideways sway, blink.
+      const AMB = { dust: ['#ffe2b0', 0.22, 0.25, 0.1, 0], bubbles: ['#9fe6ff', 0.3, 1.1, 0.25, 0], wisps: ['#c28cff', 0.6, 0.15, 0.6, 0.5], embers: ['#ff8a2a', 0.28, 1.6, 0.4, 0.3], snow: ['#ffffff', 0.3, -1.2, 0.5, 0], fireflies: ['#b6ff6a', 0.35, 0.1, 0.8, 1] };
+      let amb = AMB.dust, pools = [];
+      const room = new T.Group(); scene.add(room);
+      const dyn = new T.Group(); scene.add(dyn);
+      let perfAcc = 0, perfN = 0, slowShadows = false, shadowTick = 0;
+      let level = null, menuKey = '', door = null, portal = null, doorArrow = null, chevrons = [], angelG = null, chestG = null, spikesM = [], flames = [], heroRing = null;
+      const ents = new Map();
+
+      // ---------- Characters (morph-blended poses) ----------
+      const charMats = {};
+      // Three-step cel ramp (Archero-style shading) and one shared outline material.
+      const toonRamp = new T.DataTexture(new Uint8Array([150, 150, 150, 255, 205, 205, 205, 255, 255, 255, 255, 255]), 3, 1);
+      toonRamp.minFilter = toonRamp.magFilter = T.NearestFilter; toonRamp.needsUpdate = true;
+      const outlineMat = new T.MeshBasicMaterial({ color: 0x1b0f08, side: T.BackSide });
+      outlineMat.onBeforeCompile = sh => { sh.vertexShader = sh.vertexShader.replace('#include <morphtarget_vertex>', '#include <morphtarget_vertex>\n  transformed += normal * 0.035;'); };
+      function charMesh(name, scale, opts) {
+        const u = window.ARROW_CHARS.chars[name];
+        const mat = opts ? new T.MeshToonMaterial(Object.assign({ map: charTex(u.tex), gradientMap: toonRamp }, opts)) : (charMats[u.tex] || (charMats[u.tex] = new T.MeshToonMaterial({ map: charTex(u.tex), gradientMap: toonRamp }))).clone();
+        if (mat.map && mat.map.anisotropy !== Math.min(8, maxAniso)) { mat.map.anisotropy = Math.min(8, maxAniso); const im = mat.map.image; if (im && (im.complete === undefined || (im.complete && im.naturalWidth))) mat.map.needsUpdate = true; }
+        const m = new T.Mesh(charGeo(name), mat); m.scale.setScalar(scale || 1); m.castShadow = true;
+        if (m.updateMorphTargets) m.updateMorphTargets();
+        // Ink outline: the same morphing geometry pushed out along its normals, drawn back faces only.
+        const ol = new T.Mesh(m.geometry, outlineMat); ol.scale.copy(m.scale);
+        if (ol.updateMorphTargets) ol.updateMorphTargets();
+        ol.morphTargetInfluences = m.morphTargetInfluences; ol.raycast = () => {};
+        const sh = new T.Mesh(shadowGeo, shadowMat); sh.scale.setScalar(2.6 * (scale || 1)); sh.position.y = 0.05;
+        const g = new T.Group(); g.add(m, ol, sh); g.userData = { m };
+        pose(m, 6, 6, 0);
+        return g;
+      }
+      // ---------- Outfits (skins.js): repainted texture, glowing parts, a crown / halo / horns and a particle signature ----------
+      const SKT = {};
+      function skinMaps(name, sk) {
+        const u = window.ARROW_CHARS.chars[name], key = u.tex + ':' + sk.id;
+        if (SKT[key]) return SKT[key];
+        const mk = c => { const t = new T.CanvasTexture(c); t.flipY = false; if ('colorSpace' in t) t.colorSpace = T.SRGBColorSpace; return t; };
+        // Fixed size before the first upload: WebGL texture storage cannot grow when the image loads later.
+        const cv = () => { const c = document.createElement('canvas'); c.width = c.height = 512; return c; };
+        const c = cv(), c2 = sk.glow ? cv() : null;
+        const out = SKT[key] = { map: mk(c), emap: c2 ? mk(c2) : null };
+        const paint = img => {
+          const g = c.getContext('2d'); g.drawImage(img, 0, 0, c.width, c.height);
+          const d = g.getImageData(0, 0, c.width, c.height), mask = window.ArrowSkins.recolor(d.data, sk); g.putImageData(d, 0, 0); out.map.needsUpdate = true;
+          if (c2 && mask) { c2.getContext('2d').putImageData(new ImageData(mask, c.width, c.height), 0, 0); out.emap.needsUpdate = true; }
+        };
+        const img = charTex(u.skinTex || u.tex).image; // a hero can name a cleaner source to repaint (Frost Cleric: the original Cleric)
+        if (img.complete && img.naturalWidth) paint(img); else img.addEventListener('load', () => paint(img), { once: true });
+        return out;
+      }
+      const gold = new T.MeshToonMaterial({ color: '#ffc928', emissive: '#7a4a00', gradientMap: toonRamp });
+      function topPiece(kind) {
+        const g = new T.Group();
+        if (kind === 'crown') {
+          const band = new T.Mesh(new T.CylinderGeometry(0.34, 0.3, 0.18, 20, 1, true), gold); band.material.side = T.DoubleSide; g.add(band);
+          for (let k = 0; k < 6; k++) { const a = k / 6 * Math.PI * 2, sp = new T.Mesh(new T.ConeGeometry(0.07, 0.24, 5), gold); sp.position.set(Math.sin(a) * 0.32, 0.2, Math.cos(a) * 0.32); g.add(sp);
+            const gem = new T.Mesh(new T.OctahedronGeometry(0.05), new T.MeshBasicMaterial({ color: k % 2 ? '#ff3a5a' : '#3ad0ff' })); gem.position.set(Math.sin(a) * 0.345, 0, Math.cos(a) * 0.345); g.add(gem); }
+        } else if (kind === 'halo') {
+          g.add(new T.Mesh(new T.TorusGeometry(0.36, 0.045, 8, 36).rotateX(Math.PI / 2), new T.MeshBasicMaterial({ color: '#fff0a0' })));
+          const gl = new T.Mesh(new T.RingGeometry(0.22, 0.62, 36).rotateX(-Math.PI / 2), new T.MeshBasicMaterial(Object.assign({ map: glowTex, color: '#ffd23f', side: T.DoubleSide, opacity: 0.7 }, add))); g.add(gl);
+        } else if (kind === 'horns') {
+          const hm = new T.MeshToonMaterial({ color: '#2a1440', emissive: '#7a20c0', gradientMap: toonRamp });
+          for (const sx of [-1, 1]) { const h = new T.Mesh(new T.ConeGeometry(0.09, 0.5, 8).translate(0, 0.25, 0), hm); h.position.set(sx * 0.2, -0.1, 0); h.rotation.z = -sx * 0.55; g.add(h);
+            const tip = new T.Sprite(new T.SpriteMaterial(Object.assign({ map: glowTex, color: '#d070ff' }, add))); tip.scale.setScalar(0.35); tip.position.set(sx * 0.42, 0.3, 0); g.add(tip); }
+        }
+        return g;
+      }
+      // Dress a character group in an outfit (or back to its own clothes).
+      function dress(g, name, sk) {
+        const mat = g.userData.m.material, u = window.ARROW_CHARS.chars[name];
+        if (g.userData.top) { g.remove(g.userData.top); g.userData.top = null; }
+        for (const o of g.userData.orbs || []) g.remove(o); g.userData.orbs = null;
+        g.userData.skin = sk || null;
+        if (!sk) { mat.map = charTex(u.tex); mat.emissiveMap = null; mat.needsUpdate = true; return; }
+        if (sk.pal) { const t = skinMaps(name, sk); mat.map = t.map; mat.emissiveMap = t.emap; mat.needsUpdate = true; }
+        const geo = g.userData.m.geometry; if (!geo.boundingBox) geo.computeBoundingBox();
+        g.userData.headY = geo.boundingBox.max.y * g.userData.m.scale.y;
+        if (sk.fx.top) { const tp = topPiece(sk.fx.top); tp.scale.setScalar(g.userData.m.scale.y / 1.7 * 1.5); g.add(tp); g.userData.top = tp; }
+        if (sk.fx.kind === 'orbs') g.userData.orbs = [0, 1, 2].map(k => { const o = new T.Sprite(new T.SpriteMaterial(Object.assign({ map: glowTex, color: sk.fx.cols[k % sk.fx.cols.length] }, add))); g.add(o); return o; });
+      }
+      // Per-frame outfit life: glow pulse, floating headpiece, orbiting motes and the outfit's particles.
+      function skinFx(g, x, z, moving, dt, time) {
+        const sk = g.userData.skin; if (!sk) return;
+        const s = g.userData.m.scale.y / 1.7, hy = g.userData.headY || 3 * s, c = sk.fx.cols, col = () => c[(Math.random() * c.length) | 0];
+        const mat = g.userData.m.material;
+        if (sk.glow && mat.emissive) { const k = 0.55 + 0.35 * Math.sin(time * 3.2) + 0.1 * Math.sin(time * 11); mat.emissive.setRGB(k, k, k); }
+        if (g.userData.top) { const tp = g.userData.top; tp.position.y = hy * 0.94 + 0.07 * s * Math.sin(time * 2.4); tp.rotation.y = sk.fx.top === 'horns' ? 0 : time * 0.9; }
+        if (g.userData.orbs) g.userData.orbs.forEach((o, k) => { const a = time * 2.2 + k * 2.094; o.position.set(Math.sin(a) * 1.1 * s, hy * 0.55 + 0.3 * s * Math.sin(time * 3 + k), Math.cos(a) * 1.1 * s); o.scale.setScalar((0.55 + 0.12 * Math.sin(time * 6 + k)) * s);
+          if (Math.random() < dt * 10) { const w = o.getWorldPosition(wv); emit(sparks, w.x, w.y, w.z, 0, 0.2, 0, 0.5, c[k % c.length]); } });
+        const r = 0.7 * s, rx = () => x + rnd(-r, r), rz = () => z + rnd(-r, r), k = sk.fx.kind;
+        if (k === 'embers') { if (Math.random() < dt * 22) emit(sparks, rx(), rnd(0.3, hy), rz(), rnd(-0.4, 0.4), rnd(1.5, 3.2), rnd(-0.4, 0.4), rnd(0.7, 1.3), col(), -0.6);
+          if (Math.random() < dt * 3) emit(puffs, x, hy * 0.9, z, rnd(-0.2, 0.2), 1.2, rnd(-0.2, 0.2), 1, '#3a2620'); }
+        else if (k === 'smoke') { if (Math.random() < dt * 7) emit(puffs, rx(), rnd(0.3, hy * 0.6), rz(), 0, rnd(0.5, 1), 0, rnd(0.8, 1.3), c[0]); if (Math.random() < dt * 10) emit(sparks, rx(), rnd(0.3, hy), rz(), 0, 0.6, 0, 0.8, '#b48cff'); }
+        else if (k === 'leaves' || k === 'snow') { if (Math.random() < dt * 12) emit(sparks, x + rnd(-1.6, 1.6) * s, hy + rnd(0.5, 1.5) * s, z + rnd(-1.6, 1.6) * s, rnd(-0.5, 0.5), -rnd(0.6, 1.2), rnd(-0.5, 0.5), rnd(1.4, 2.2), col()); }
+        else if (k === 'fireflies') { if (Math.random() < dt * 9) emit(sparks, x + rnd(-1.4, 1.4) * s, rnd(0.4, hy), z + rnd(-1.4, 1.4) * s, rnd(-0.6, 0.6), rnd(-0.2, 0.4), rnd(-0.6, 0.6), rnd(1.2, 2), col()); }
+        else if (k === 'sparkle' || k === 'stars') { if (Math.random() < dt * 16) emit(sparks, rx(), rnd(0.2, hy * 1.05), rz(), 0, rnd(0.3, 1.2), 0, rnd(0.4, 0.9), col()); }
+        else if (k === 'sparks') { if (Math.random() < dt * 14) emit(sparks, rx(), rnd(hy * 0.4, hy * 0.8), rz(), rnd(-1.5, 1.5), rnd(1.5, 3.5), rnd(-1.5, 1.5), rnd(0.4, 0.8), col(), 6); }
+        // A short coloured trail at the feet while running.
+        if (moving && Math.random() < dt * 18) emit(sparks, x + rnd(-0.3, 0.3), 0.2, z + rnd(-0.3, 0.3), 0, rnd(0.2, 0.6), 0, 0.5, col());
+      }
+      const wv = new T.Vector3();
+      // Chapter bosses each get a look of their own (palette, glowing cracks or runes, a headpiece, particles), so
+      // none of them reads like a big version of a normal foe; guardians and mini bosses get a crew-coloured aura.
+      const BOSS_LOOK = {
+        warrior: { id: 'b_bone', pal: { cloth: [275, 0.55, 0.3], leather: [270, 0.3, 0.2], light: [45, 0.25, 0.8], trim: [48, 1, 0.6] }, glow: 'trim', fx: { kind: 'smoke', cols: ['#9a5cff', '#2a1040'], top: 'crown' } },
+        glubx: { id: 'b_glub', pal: { cloth: [190, 0.8, 0.25], leather: [200, 0.4, 0.18], light: [175, 0.9, 0.6], trim: [175, 1, 0.6] }, glow: 'light', fx: { kind: 'fireflies', cols: ['#3affef', '#7a8aff'], top: 'halo' } },
+        mushking: { id: 'b_mush', pal: { cloth: [285, 0.6, 0.35], leather: [30, 0.4, 0.3], light: [95, 0.7, 0.55] }, glow: 'light', fx: { kind: 'smoke', cols: ['#8aff4a', '#3a5a10'], top: 'crown' } },
+        dragonx: { id: 'b_magma', pal: { cloth: [10, 0.25, 0.18], leather: [10, 0.2, 0.12], light: [20, 0.2, 0.3], trim: [25, 1, 0.55] }, cracks: [22, 1, 0.55], glow: 'trim', fx: { kind: 'embers', cols: ['#ff6a10', '#ffb43a', '#ffd86a'], top: 'horns' } },
+        alpakingx: { id: 'b_frost', pal: { cloth: [200, 0.6, 0.65], leather: [210, 0.4, 0.4], light: [195, 0.4, 0.9], trim: [190, 1, 0.7] }, glow: 'trim', fx: { kind: 'snow', cols: ['#ffffff', '#bfeaff'], top: 'crown' } },
+        golex: { id: 'b_stone', pal: { cloth: [30, 0.08, 0.4], leather: [30, 0.06, 0.28], light: [35, 0.06, 0.6], trim: [185, 1, 0.6] }, cracks: [185, 1, 0.55], glow: 'trim', fx: { kind: 'sparks', cols: ['#5ff3ff', '#ffffff'] } },
+      };
+      const CREW_C = ['#b48cff', '#3affef', '#8aff4a', '#ff7a1a', '#bfeaff', '#ffd23f'];
+      const bossLook = e => (!e.mid && BOSS_LOOK[e.kind]) || { id: 'g' + (e.crew || 0), fx: { kind: e.mini ? 'sparkle' : 'stars', cols: [CREW_C[(e.crew || 0) % 6], '#ffffff'], top: e.mini ? null : 'halo' } };
+      function pose(m, a, b, t) {
+        const inf = m.morphTargetInfluences; if (!inf) return;
+        for (let i = 0; i < inf.length; i++) inf[i] = 0;
+        inf[a] += 1 - t; inf[b] += t;
+      }
+      const frac = x => x - Math.floor(x);
+      function heroPose(m, e) {
+        if (e.dead) return pose(m, 6, 7, 1);
+        if (e.atkT > 0) { const ph = 1 - e.atkT / 0.25; return ph < 0.4 ? pose(m, 6, 4, ph / 0.4) : pose(m, 4, 5, Math.min(1, (ph - 0.4) / 0.4)); }
+        if (e.moving) { const a = Math.floor(e.anim) % 4; return pose(m, a, (a + 1) % 4, frac(e.anim)); }
+        pose(m, 6, 4, 0.12 + 0.12 * Math.sin(performance.now() / 400));
+      }
+      function foePose(m, e) {
+        if (e.state === 'dead') return pose(m, 6, 7, Math.min(1, (0.9 - e.st) * 3));
+        if (e.state === 'rise') return pose(m, 6, 6, 0);
+        if (e.state === 'wind' || e.state === 'aim' || e.state === 'cast' || e.state === 'summon' || e.state === 'slam') return pose(m, 6, 4, Math.min(1, 0.7 + Math.sin(e.anim * 2) * 0.3));
+        if (e.state === 'atk' || e.state === 'dash') return pose(m, 4, 5, 1);
+        if (e.state === 'tired') return pose(m, 6, 7, 0.25);
+        if (e.moving) { const a = Math.floor(e.anim) % 4; return pose(m, a, (a + 1) % 4, frac(e.anim)); }
+        pose(m, 6, 4, 0.1 + 0.1 * Math.sin(e.anim));
+      }
+
+      // ---------- Pools ----------
+      function pool(make) { const list = []; return { list, get(i) { if (!list[i]) { list[i] = make(); dyn.add(list[i]); } list[i].visible = true; return list[i]; }, hide(from) { for (let i = from; i < list.length; i++) list[i].visible = false; } }; }
+      // Thrown weapons are built from coloured parts (one geometry with vertex colours), lying flat so they spin like a disc.
+      function weaponGeo(parts) {
+        const pos = [], col = [], c = new T.Color();
+        for (const [g, hex] of parts) { const n = g.toNonIndexed(), p = n.attributes.position; c.set(hex); for (let i = 0; i < p.count; i++) { pos.push(p.getX(i), p.getY(i), p.getZ(i)); col.push(c.r, c.g, c.b); } }
+        const out = new T.BufferGeometry(); out.setAttribute('position', new T.Float32BufferAttribute(pos, 3)); out.setAttribute('color', new T.Float32BufferAttribute(col, 3)); return out;
+      }
+      const axeGeo = (s, wood, steel) => weaponGeo([
+        [new T.BoxGeometry(0.12 * s, 0.1 * s, 1.5 * s), wood],                                              // handle
+        [new T.CylinderGeometry(0.42 * s, 0.42 * s, 0.08 * s, 14, 1, false, -Math.PI / 2, Math.PI).translate(0.05 * s, 0, -0.55 * s), steel], // curved blade
+        [new T.BoxGeometry(0.26 * s, 0.14 * s, 0.22 * s).translate(-0.08 * s, 0, -0.55 * s), '#55575e'],    // back of the head
+      ]);
+      const swordGeo = weaponGeo([
+        [new T.BoxGeometry(0.16, 0.06, 1.25).translate(0, 0, -0.35), '#e8f2ff'],
+        [new T.ConeGeometry(0.11, 0.25, 4).rotateX(-Math.PI / 2).translate(0, 0, -1.08), '#e8f2ff'],
+        [new T.BoxGeometry(0.62, 0.1, 0.1).translate(0, 0, 0.3), '#d4a53a'],
+        [new T.BoxGeometry(0.1, 0.1, 0.38).translate(0, 0, 0.52), '#6b3f1d'],
+      ]);
+      const SHOT_GEO = {
+        bolt: new T.CylinderGeometry(0.08, 0.08, 1.5, 6).rotateX(Math.PI / 2), orb: new T.SphereGeometry(0.4, 12, 8), blade: swordGeo, axe: axeGeo(1, '#8a5a2b', '#dfe6ee'),
+      };
+      const SHOT_COL = { bolt: '#fff1a8', orb: '#9be7ff', blade: '#ffffff', axe: '#ffffff' };
+      const shotMat = {}; for (const k in SHOT_COL) shotMat[k] = k === 'blade' || k === 'axe' ? bmat(SHOT_COL[k], { vertexColors: true }) : bmat(SHOT_COL[k]);
+      let shotKind = 'bolt';
+      const shots = pool(() => new T.Mesh(SHOT_GEO.bolt, shotMat.bolt));
+      const trailGeo = new T.PlaneGeometry(0.5, 3).rotateX(-Math.PI / 2).translate(0, 0, -1.5);
+      const trails = pool(() => new T.Mesh(trailGeo, new T.MeshBasicMaterial(Object.assign({ map: trailTex, color: '#fff1a8' }, add))));
+      const shotGlows = pool(() => new T.Sprite(new T.SpriteMaterial(Object.assign({ map: glowTex, color: '#fff1a8' }, add))));
+      const glows = pool(() => { const s = new T.Sprite(new T.SpriteMaterial(Object.assign({ map: glowTex, color: '#d65cff' }, add))); s.scale.setScalar(2.2); return s; });
+      const foeOrb = new T.SphereGeometry(0.42, 10, 8), foeBolt = new T.CylinderGeometry(0.09, 0.09, 1.3, 5).rotateX(Math.PI / 2), foeAxe = axeGeo(1.25, '#4a3524', '#b9c0c8');
+      const foes = pool(() => new T.Mesh(foeOrb, bmat('#ff4dd2')));
+      const coins = pool(() => new T.Mesh(new T.CylinderGeometry(0.38, 0.38, 0.12, 12), new T.MeshLambertMaterial({ color: '#ffd23f', emissive: '#6a4a00' })));
+      const lines = pool(() => new T.Mesh(new T.PlaneGeometry(1, 1).rotateX(-Math.PI / 2).translate(0, 0, -0.5), bmat('#ff3b3b', { transparent: true, opacity: 0.35, depthWrite: false })));
+      const rings = pool(() => new T.Mesh(new T.PlaneGeometry(2, 2).rotateX(-Math.PI / 2), new T.MeshBasicMaterial({ map: warnTex, color: '#ff3b3b', transparent: true, opacity: 0.5, depthWrite: false })));
+      const fills = pool(() => new T.Mesh(new T.CircleGeometry(1, 32).rotateX(-Math.PI / 2), new T.MeshBasicMaterial({ color: '#ff3b3b', transparent: true, opacity: 0.28, depthWrite: false })));
+      const shocks2 = pool(() => new T.Mesh(new T.PlaneGeometry(2, 2).rotateX(-Math.PI / 2), new T.MeshBasicMaterial(Object.assign({ map: shockTex, color: '#c9a2ff' }, add))));
+      const orbs = pool(() => { const g = new T.Group(); g.add(new T.Mesh(new T.SphereGeometry(0.34, 12, 10), bmat('#fff2b0'))); // white-hot core in a flickering flame
+        const s = new T.Sprite(new T.SpriteMaterial(Object.assign({ map: glowTex, color: '#ff7a1a' }, add))); s.scale.setScalar(2.4); g.add(s);
+        const s2 = new T.Sprite(new T.SpriteMaterial(Object.assign({ map: glowTex, color: '#ffd23f' }, add))); s2.scale.setScalar(1.2); g.add(s2); return g; });
+
+      // ---------- Particles ----------
+      // Two point clouds: small sparks and big soft puffs. CPU-updated, additive, pooled.
+      function cloud(n, size) {
+        const g = new T.BufferGeometry(), pos = new Float32Array(n * 3), col = new Float32Array(n * 3);
+        g.setAttribute('position', new T.BufferAttribute(pos, 3)); g.setAttribute('color', new T.BufferAttribute(col, 3));
+        const pts = new T.Points(g, new T.PointsMaterial(Object.assign({ size, map: dotTex, vertexColors: true, sizeAttenuation: true }, add)));
+        pts.frustumCulled = false; scene.add(pts);
+        return { pts, pos, col, n, p: Array.from({ length: n }, () => ({ life: 0 })), i: 0 };
+      }
+      const sparks = cloud(1200, 0.8), puffs = cloud(260, 2.6), flamesC = cloud(500, 1.9);
+      const tmpC = new T.Color();
+      function emit(c, x, y, z, vx, vy, vz, life, color, grav) {
+        const q = c.p[c.i]; c.i = (c.i + 1) % c.n;
+        Object.assign(q, { x, y, z, vx, vy, vz, life, max: life, grav: grav || 0 });
+        tmpC.set(color); q.r = tmpC.r; q.g = tmpC.g; q.b = tmpC.b;
+      }
+      function stepCloud(c, dt) {
+        for (let k = 0; k < c.n; k++) {
+          const q = c.p[k], o = k * 3;
+          if (q.life <= 0) { c.pos[o + 1] = -999; continue; }
+          q.life -= dt; q.vy -= q.grav * dt; q.x += q.vx * dt; q.y += q.vy * dt; q.z += q.vz * dt;
+          if (q.y < 0.05 && q.grav) { q.y = 0.05; q.vy *= -0.3; q.vx *= 0.6; q.vz *= 0.6; }
+          const a = Math.max(0, q.life / q.max);
+          c.pos[o] = q.x; c.pos[o + 1] = q.y; c.pos[o + 2] = q.z; c.col[o] = q.r * a; c.col[o + 1] = q.g * a; c.col[o + 2] = q.b * a;
+        }
+        c.pts.geometry.attributes.position.needsUpdate = true; c.pts.geometry.attributes.color.needsUpdate = true;
+      }
+      const rnd = (a, b) => a + Math.random() * (b - a);
+      const beams = [], beamPool = [], lvBeamGeo = new T.CylinderGeometry(1.2, 1.6, 12, 20, 1, true).translate(0, 6, 0);
+      // Expanding shock ring on the floor (skill hits, crits).
+      // Rings, shards and level-up beams are pooled: a new material per hit made three.js rebuild program parameters
+      // (getParameters / getProgramCacheKey) several times a frame in busy fights.
+      const ringGeo = new T.RingGeometry(0.75, 1, 40).rotateX(-Math.PI / 2), shocks = [], ringPool = [];
+      function ring(x, z, color, size, life) {
+        const m = ringPool.pop() || new T.Mesh(ringGeo, new T.MeshBasicMaterial(Object.assign({ side: T.DoubleSide, opacity: 1 }, add)));
+        m.material.color.set(color); m.material.opacity = 1; m.visible = true;
+        m.position.set(x, 0.12, z); if (!m.parent) scene.add(m); shocks.push({ m, life, max: life, size });
+      }
+      // ---- Cinematic layer: light flares, ice shards, jagged lightning, screen flash, camera punch ----
+      const flares = [];
+      const flarePool = [];
+      function flare(x, y, z, color, size, life) {
+        if (flares.length > 40) return;
+        const sp = flarePool.pop() || new T.Sprite(new T.SpriteMaterial(Object.assign({ map: glowTex }, add)));
+        sp.material.color.set(color); sp.material.opacity = 1; sp.visible = true;
+        sp.position.set(x, y, z); sp.scale.setScalar(size * 0.4); if (!sp.parent) scene.add(sp); flares.push({ sp, life, max: life, size });
+      }
+      const shardGeo = new T.ConeGeometry(0.22, 0.9, 5), shards = [], shardPool = [];
+      function shatter(x, z, n, color) {
+        for (let k = 0; k < n; k++) {
+          if (shards.length > 120) break;
+          const m = shardPool.pop() || new T.Mesh(shardGeo, new T.MeshLambertMaterial({ emissive: '#2a7fb0', transparent: true, opacity: 0.9 })), a = Math.random() * Math.PI * 2, v = rnd(4, 9);
+          m.material.color.set(color); m.visible = true;
+          m.position.set(x, rnd(1, 2), z); m.rotation.set(rnd(0, 6), rnd(0, 6), rnd(0, 6)); m.scale.setScalar(rnd(0.7, 1.5)); if (!m.parent) scene.add(m);
+          shards.push({ m, vx: Math.sin(a) * v, vy: rnd(4, 9), vz: Math.cos(a) * v, life: rnd(0.6, 1), sx: rnd(-12, 12), sz: rnd(-12, 12) });
+        }
+      }
+      const boltMat = new T.MeshBasicMaterial(Object.assign({ color: '#e9d4ff' }, add)), boltCore = new T.MeshBasicMaterial(Object.assign({ color: '#ffffff' }, add));
+      const segGeo = new T.BoxGeometry(1, 1, 1), boltsL = [];
+      function lightning(x1, y1, z1, x2, y2, z2, w) {
+        const g = new T.Group(), n = 7; let px = x1, py = y1, pz = z1;
+        for (let k = 1; k <= n; k++) {
+          const t = k / n, j = k === n ? 0 : 0.9;
+          const nx = x1 + (x2 - x1) * t + rnd(-j, j), ny = y1 + (y2 - y1) * t + rnd(-j, j) * 0.5, nz = z1 + (z2 - z1) * t + rnd(-j, j);
+          const len = Math.hypot(nx - px, ny - py, nz - pz);
+          for (const [mat, ww] of [[boltMat, w], [boltCore, w * 0.35]]) {
+            const m = new T.Mesh(segGeo, mat); m.position.set((px + nx) / 2, (py + ny) / 2, (pz + nz) / 2); m.scale.set(ww, ww, len); m.lookAt(nx, ny, nz); g.add(m);
+          }
+          px = nx; py = ny; pz = nz;
+        }
+        scene.add(g); boltsL.push({ g, life: 0.16 });
+      }
+      const flashEl = document.createElement('div');
+      flashEl.style.cssText = 'position:fixed;inset:0;pointer-events:none;z-index:3;opacity:0;mix-blend-mode:screen;transition:opacity .18s ease-out';
+      document.body.appendChild(flashEl);
+      function screenFlash(color, a) { flashEl.style.transition = 'none'; flashEl.style.background = 'radial-gradient(circle, ' + color + ', transparent 75%)'; flashEl.style.opacity = a; void flashEl.offsetWidth; flashEl.style.transition = 'opacity .35s ease-out'; flashEl.style.opacity = 0; }
+      let punch = 0;
+      const BASE_FOV = 46;
+      const auraG = new T.Mesh(new T.RingGeometry(1.25, 1.6, 6, 1).rotateX(-Math.PI / 2), new T.MeshBasicMaterial(Object.assign({ color: '#3b8cff', side: T.DoubleSide }, add))); auraG.visible = false; scene.add(auraG);
+      const aura2 = new T.Mesh(new T.RingGeometry(1.6, 1.75, 40, 1).rotateX(-Math.PI / 2), new T.MeshBasicMaterial(Object.assign({ color: '#ffd23f', side: T.DoubleSide, opacity: 0.8 }, add))); aura2.visible = false; scene.add(aura2);
+      const pillar = new T.Mesh(new T.CylinderGeometry(1.1, 1.5, 9, 20, 1, true).translate(0, 4.5, 0), new T.MeshBasicMaterial(Object.assign({ map: beamTex, color: '#ff6a5a', side: T.DoubleSide, opacity: 0.2 }, add))); pillar.visible = false; scene.add(pillar);
+      // Top-tier gear colours: Mythic red/gold, Celestial cyan/violet (ring, pillar and sparkles).
+      const topCol = g => g.celestial ? (Math.random() < 0.5 ? '#3fe8ff' : '#d7a8ff') : Math.random() < 0.5 ? '#ff4d5a' : '#ffd23f';
+      const tintTop = g => { aura2.material.color.set(g.celestial ? '#9ff6ff' : '#ffd23f'); pillar.material.color.set(g.celestial ? '#5fe0ff' : '#ff6a5a'); };
+      const handG = new T.Sprite(new T.SpriteMaterial(Object.assign({ map: glowTex, color: '#3b8cff' }, add))); handG.visible = false; scene.add(handG);
+      // Ground effects: soft glowing discs (own material each, so colours never leak between pools).
+      const discGeo = new T.CircleGeometry(1, 32).rotateX(-Math.PI / 2);
+      const zoneM = pool(() => { const m = new T.Mesh(discGeo, new T.MeshBasicMaterial(Object.assign({ map: zoneTex, color: '#ff6a10' }, add))); m.renderOrder = 3; return m; });
+      const auraM = new T.Mesh(new T.PlaneGeometry(2, 2).rotateX(-Math.PI / 2), new T.MeshBasicMaterial(Object.assign({ map: frostTex, color: '#8fd4ff', opacity: 0.7 }, add)));
+      const iceG = new T.Group(); iceG.visible = false; scene.add(iceG);
+      { const cg = new T.OctahedronGeometry(0.36, 0).scale(1, 2.2, 1), cm = new T.MeshLambertMaterial({ color: '#dff6ff', emissive: '#4fb4ff', emissiveIntensity: 0.7, transparent: true, opacity: 0.92 });
+        for (let k = 0; k < 6; k++) { const c = new T.Mesh(cg, cm), gl = new T.Sprite(new T.SpriteMaterial(Object.assign({ map: glowTex, color: '#7fd8ff', opacity: 0.7 }, add))); gl.scale.setScalar(1.3); c.add(gl); iceG.add(c); } }
+      const auraF = new T.Mesh(discGeo, new T.MeshBasicMaterial(Object.assign({ map: glowTex, color: '#3fa8ff', opacity: 0.35 }, add)));
+      auraM.visible = auraF.visible = false; scene.add(auraM, auraF);
+      const bladeM = pool(() => { const g = new T.Group(); const b = new T.Mesh(swordGeo, bmat('#ffffff', { vertexColors: true })); b.scale.setScalar(1.4); g.add(b);
+        const gl = new T.Sprite(new T.SpriteMaterial(Object.assign({ map: glowTex, color: '#cfe8ff' }, add))); gl.scale.setScalar(2); g.add(gl); return g; });
+      // Mana shield: bright at the rim (fresnel), a faint hex lattice and a light band sweeping up — reads as a force field.
+      const bubbleMat = new T.ShaderMaterial({ transparent: true, depthWrite: false, blending: T.AdditiveBlending, uniforms: { t: { value: 0 }, col: { value: new T.Color('#7fd0ff') } },
+        vertexShader: 'varying vec3 vN; varying vec3 vV; varying vec3 vP; void main(){ vec4 wp = modelMatrix * vec4(position, 1.0); vP = position; vN = normalize(mat3(modelMatrix) * normal); vV = normalize(cameraPosition - wp.xyz); gl_Position = projectionMatrix * viewMatrix * wp; }',
+        fragmentShader: 'uniform float t; uniform vec3 col; varying vec3 vN; varying vec3 vV; varying vec3 vP;' +
+          'float hx(vec2 p){ p.x *= 1.1547; p.y += mod(floor(p.x), 2.0) * 0.5; p = abs(fract(p) - 0.5); return abs(max(p.x * 1.5 + p.y, p.y * 2.0) - 1.0); }' +
+          'void main(){ float f = pow(1.0 - abs(dot(vN, vV)), 2.0); vec2 uv = vec2(atan(vP.z, vP.x) * 1.9, vP.y * 3.0); float h = smoothstep(0.1, 0.0, hx(uv));' +
+          ' float sw = smoothstep(0.12, 0.0, abs(fract(vP.y * 0.5 + 0.5 - t * 0.45) - 0.5)); float a = f * 0.95 + h * (0.12 + f * 0.6) + sw * 0.22; gl_FragColor = vec4(col * (0.8 + f), a); }' });
+      const bubble = new T.Mesh(new T.SphereGeometry(1, 32, 20), bubbleMat); bubble.visible = false; scene.add(bubble);
+      // Passive-skill marks on the hero: wisdom motes, a rage glow, a second-wind halo, a giant-slayer hand flame.
+      const wisdomS = [0, 1].map(() => { const s = new T.Sprite(new T.SpriteMaterial(Object.assign({ map: glowTex, color: '#6fb8ff' }, add))); s.visible = false; scene.add(s); return s; });
+      const rageG = new T.Mesh(new T.CircleGeometry(1, 32).rotateX(-Math.PI / 2), new T.MeshBasicMaterial(Object.assign({ map: glowTex, color: '#ff2a2a', opacity: 0.6 }, add))); rageG.visible = false; scene.add(rageG);
+      const haloS = new T.Mesh(new T.TorusGeometry(0.42, 0.06, 8, 32).rotateX(Math.PI / 2), new T.MeshBasicMaterial(Object.assign({ color: '#ffe08a' }, add))); haloS.visible = false; scene.add(haloS);
+      const giantS = new T.Sprite(new T.SpriteMaterial(Object.assign({ map: glowTex, color: '#ff4a2a' }, add))); giantS.visible = false; scene.add(giantS);
+      const meteorS = new T.Sprite(new T.SpriteMaterial(Object.assign({ map: glowTex, color: '#ff8a2a' }, add))); meteorS.visible = false; scene.add(meteorS);
+      function fx(kind, x, z, color, n) {
+        n = n || 10; color = color || '#ffe9a8';
+        if (kind === 'hit') { for (let k = 0; k < n; k++) emit(sparks, x, 1.4, z, rnd(-6, 6), rnd(1, 7), rnd(-6, 6), rnd(0.2, 0.45), color, 14); flare(x, 1.4, z, color, 2.6, 0.16); }
+        else if (kind === 'die') {
+          flare(x, 1.4, z, color, 5, 0.3);
+          for (let k = 0; k < n; k++) emit(sparks, x + rnd(-0.6, 0.6), rnd(0.8, 2.2), z + rnd(-0.6, 0.6), rnd(-5, 5), rnd(3, 9), rnd(-5, 5), rnd(0.6, 1.1), k % 3 ? color : '#ffd23f', 18);
+          for (let k = 0; k < 6; k++) emit(puffs, x + rnd(-0.8, 0.8), 0.6, z + rnd(-0.8, 0.8), rnd(-1.2, 1.2), rnd(0.5, 1.5), rnd(-1.2, 1.2), rnd(0.5, 0.8), '#6a5a4a');
+        } else if (kind === 'rise') for (let k = 0; k < 8; k++) { const a = k / 8 * Math.PI * 2; emit(puffs, x + Math.sin(a), 0.3, z + Math.cos(a), Math.sin(a) * 2, 0.8, Math.cos(a) * 2, 0.6, '#5a4a3a'); }
+        else if (kind === 'blink') { for (let k = 0; k < 18; k++) emit(sparks, x, rnd(0.3, 2.8), z, rnd(-3, 3), rnd(-1, 3), rnd(-3, 3), rnd(0.3, 0.7), '#c77dff'); emit(puffs, x, 1.4, z, 0, 0, 0, 0.5, '#9d4dff'); }
+        else if (kind === 'hurt') for (let k = 0; k < n; k++) emit(sparks, x, 1.5, z, rnd(-4, 4), rnd(1, 5), rnd(-4, 4), 0.35, color, 12);
+        else if (kind === 'slam') for (let k = 0; k < 30; k++) { const a = k / 30 * Math.PI * 2; emit(puffs, x + Math.sin(a) * 2, 0.4, z + Math.cos(a) * 2, Math.sin(a) * 9, 1, Math.cos(a) * 9, 0.6, '#8a7a6a'); }
+        else if (kind === 'door') for (let k = 0; k < 30; k++) emit(sparks, x + rnd(-2, 2), rnd(0, 3), z + rnd(0, 1), rnd(-1, 1), rnd(1, 4), rnd(0, 2), rnd(0.6, 1.2), '#9effc8');
+        else if (kind === 'levelup') {
+          for (let k = 0; k < n; k++) { const a = Math.random() * Math.PI * 2, r = rnd(0.3, 1.4); emit(sparks, x + Math.sin(a) * r, rnd(0, 1), z + Math.cos(a) * r, 0, rnd(4, 9), 0, rnd(0.6, 1), color); }
+          const b = beamPool.pop() || new T.Mesh(lvBeamGeo, new T.MeshBasicMaterial(Object.assign({ map: beamTex, color: '#9dffc9', side: T.DoubleSide }, add)));
+          b.visible = true; b.position.set(x, 0, z); if (!b.parent) scene.add(b); beams.push({ m: b, life: 0.9, follow: true });
+        } else if (kind === 'ignite') {
+          flare(x, 1.4, z, '#ff8a1f', 7, 0.35); flare(x, 1.4, z, '#ffe08a', 3.5, 0.18);
+          for (let k = 0; k < 34; k++) { const a = Math.random() * Math.PI * 2, v = rnd(2, 7); emit(flamesC, x + Math.sin(a) * 0.3, rnd(0.6, 1.8), z + Math.cos(a) * 0.3, Math.sin(a) * v, rnd(2, 8), Math.cos(a) * v, rnd(0.35, 0.75), k % 3 ? '#ff6a10' : '#ffd23f', -3); }
+          for (let k = 0; k < 20; k++) emit(sparks, x, 1.4, z, rnd(-8, 8), rnd(3, 11), rnd(-8, 8), rnd(0.4, 0.9), '#ffd23f', 12);
+          for (let k = 0; k < 4; k++) emit(puffs, x + rnd(-0.6, 0.6), 1.6, z + rnd(-0.6, 0.6), rnd(-0.8, 0.8), rnd(1.5, 3), rnd(-0.8, 0.8), 0.9, '#3a2a22');
+          ring(x, z, '#ff7a1a', 4.2, 0.4);
+        } else if (kind === 'freeze') {
+          flare(x, 1.4, z, '#8fe6ff', 6.5, 0.35); flare(x, 1.4, z, '#ffffff', 3, 0.15);
+          shatter(x, z, 9, '#cdf3ff');
+          for (let k = 0; k < 30; k++) { const a = k / 30 * Math.PI * 2; emit(sparks, x + Math.sin(a) * 0.4, rnd(0.6, 2.2), z + Math.cos(a) * 0.4, Math.sin(a) * 7, rnd(0, 3), Math.cos(a) * 7, rnd(0.4, 0.8), k % 2 ? '#bff4ff' : '#ffffff', 4); }
+          ring(x, z, '#8fe6ff', 4.4, 0.45);
+        } else if (kind === 'crit') {
+          flare(x, 1.5, z, '#ffffff', 8, 0.22); flare(x, 1.5, z, '#ffb02a', 11, 0.4);
+          for (let k = 0; k < 44; k++) { const a = Math.random() * Math.PI * 2, v = rnd(8, 16); emit(sparks, x, 1.4, z, Math.sin(a) * v, rnd(2, 9), Math.cos(a) * v, rnd(0.25, 0.55), k % 2 ? '#ffd23f' : '#ff5a3a', 10); }
+          ring(x, z, '#ffd23f', 5.5, 0.35); ring(x, z, '#ffffff', 3, 0.2);
+          punch = Math.max(punch, 1); screenFlash('rgba(255,220,140,.55)', 0.6);
+        } else if (kind === 'zapfx') {
+          lightning(x, 1.3, z, color.x2, 1.3, color.z2, 0.32);
+          lightning(color.x2, 14, color.z2, color.x2, 0.2, color.z2, 0.5);
+          flare(color.x2, 1.4, color.z2, '#c77dff', 6, 0.25); flare(x, 1.4, z, '#e9d4ff', 3, 0.15);
+          for (let k = 0; k < 16; k++) emit(sparks, color.x2, 1.2, color.z2, rnd(-7, 7), rnd(2, 9), rnd(-7, 7), rnd(0.2, 0.45), k % 2 ? '#c77dff' : '#ffffff', 12);
+          ring(color.x2, color.z2, '#c77dff', 3.4, 0.3); screenFlash('rgba(200,150,255,.45)', 0.45);
+        } else if (kind === 'nova') {
+          flare(x, 1.4, z, '#c48bff', 9, 0.35); flare(x, 1.4, z, '#ffffff', 4, 0.15);
+          for (let k = 0; k < 60; k++) { const a = k / 60 * Math.PI * 2, v = rnd(12, 18); emit(sparks, x + Math.sin(a), 1.2, z + Math.cos(a), Math.sin(a) * v, rnd(0, 2), Math.cos(a) * v, rnd(0.3, 0.5), k % 3 ? '#b36bff' : '#ffffff'); }
+          ring(x, z, '#b36bff', 12, 0.45); ring(x, z, '#ffffff', 7, 0.25); screenFlash('rgba(180,120,255,.4)', 0.4); punch = Math.max(punch, 0.6);
+        } else if (kind === 'meteorhit') {
+          flare(x, 1.5, z, '#ffffff', 9, 0.2); flare(x, 1.5, z, '#ff6a10', 14, 0.5);
+          for (let k = 0; k < 60; k++) { const a = Math.random() * Math.PI * 2, v = rnd(4, 14); emit(flamesC, x, 1, z, Math.sin(a) * v, rnd(3, 12), Math.cos(a) * v, rnd(0.4, 0.9), k % 3 ? '#ff5a10' : '#ffd23f', 8); }
+          for (let k = 0; k < 10; k++) emit(puffs, x + rnd(-1.5, 1.5), 1, z + rnd(-1.5, 1.5), rnd(-2, 2), rnd(1, 4), rnd(-2, 2), 1.2, '#2e2018');
+          ring(x, z, '#ff7a1a', 8, 0.5); ring(x, z, '#ffd23f', 4.5, 0.3); screenFlash('rgba(255,150,60,.55)', 0.55); punch = Math.max(punch, 1);
+        } else if (kind === 'rainhit') {
+          flare(x, 1, z, '#fff1a8', 4.5, 0.2);
+          for (let k = 0; k < 24; k++) emit(sparks, x + rnd(-1.6, 1.6), 0.4, z + rnd(-1.6, 1.6), rnd(-3, 3), rnd(3, 8), rnd(-3, 3), rnd(0.3, 0.6), k % 2 ? '#fff1a8' : '#ffb347', 14);
+          for (let k = 0; k < 6; k++) emit(puffs, x + rnd(-1.5, 1.5), 0.5, z + rnd(-1.5, 1.5), rnd(-1, 1), 1, rnd(-1, 1), 0.6, '#6a5a4a');
+          ring(x, z, '#fff1a8', 5, 0.3);
+        } else if (kind === 'shieldpop') {
+          flare(x, 1.5, z, '#8fd8ff', 7, 0.3); ring(x, z, '#8fd8ff', 5, 0.35);
+          for (let k = 0; k < 30; k++) { const a = Math.random() * Math.PI * 2; emit(sparks, x, rnd(0.5, 2.5), z, Math.sin(a) * 8, rnd(-1, 4), Math.cos(a) * 8, 0.4, '#bfeaff'); }
+        } else if (kind === 'heal') {
+          flare(x, 1.5, z, '#7dffae', 5, 0.4);
+          for (let k = 0; k < 14; k++) { const a = Math.random() * Math.PI * 2, r = rnd(0.4, 1.2); emit(sparks, x + Math.sin(a) * r, rnd(0.2, 1.2), z + Math.cos(a) * r, 0, rnd(2.5, 5), 0, rnd(0.6, 1), k % 2 ? '#7dffae' : '#d8ffe6'); }
+        } else if (kind === 'angel') emit(sparks, x + rnd(-1.5, 1.5), rnd(0.5, 4), z + rnd(-1.5, 1.5), 0, rnd(0.5, 1.5), 0, rnd(0.8, 1.5), '#fff2b0');
+      }
+
+      // ---------- Room ----------
+      function placeInst(key, list, fit) {
+        const g = propGeo(key), m = new T.InstancedMesh(g, propMatI, list.length), d = new T.Object3D();
+        m.customDepthMaterial = instDepth; m.receiveShadow = true; m.castShadow = !/^floor/.test(key);
+        list.forEach((o, i) => { d.position.set(o[0], o[1] || 0, o[2]); d.rotation.set(0, o[3] || 0, 0); d.scale.setScalar(o[4] || fit || 1); d.updateMatrix(); m.setMatrixAt(i, d.matrix); });
+        m.instanceMatrix.needsUpdate = true; room.add(m); return m;
+      }
+      function flame(x, y, z, c) {
+        const s = new T.Sprite(new T.SpriteMaterial(Object.assign({ map: glowTex, color: c || '#ffae4a' }, add)));
+        s.position.set(x, y, z); s.scale.setScalar(2.2); room.add(s); flames.push(s);
+      }
+      let dust = null;
+      function makeDust() {
+        if (dust) return;
+        // Floating dust in the torch light.
+        const n = 90, pos = new Float32Array(n * 3);
+        for (let k = 0; k < n; k++) { pos[k * 3] = rnd(-RW, RW); pos[k * 3 + 1] = rnd(0.5, 7); pos[k * 3 + 2] = rnd(-RH, RH); }
+        const g = new T.BufferGeometry(); g.setAttribute('position', new T.BufferAttribute(pos, 3));
+        dust = new T.Points(g, new T.PointsMaterial(Object.assign({ size: 0.22, map: dotTex, color: '#ffe2b0', opacity: 0.55 }, add)));
+        dust.frustumCulled = false; scene.add(dust);
+      }
+      // Take the last room (or menu) down and free what it made: instance buffers, per-room geometry, materials and
+      // cloned textures. Shared things (prop geometry/material, pool shaders, character models) are left alone.
+      function clearRoom() {
+        while (room.children.length) {
+          const o = room.children[0]; room.remove(o);
+          o.traverse(x => {
+            if (x.userData.m || x.isSkinnedMesh) return;
+            if (x.isInstancedMesh) { x.dispose(); return; }
+            if (!x.isMesh && !x.isSprite) return;
+            if (x.geometry && !x.isSprite) x.geometry.dispose();
+            for (const m of [].concat(x.material || [])) {
+              if (m === propMat || m === propMatI || m.isShaderMaterial) continue;
+              if (m.map && m.map.userData.own) m.map.dispose();
+              // No m.dispose(): that would free the compiled shader when its last user goes, and the next room
+              // (which uses the same kinds of material) would compile it again - a visible hitch on every door.
+              // The material object itself is garbage collected.
+            }
+          });
+        }
+      }
+      function buildRoom(S, ch) {
+        clearRoom();
+        spikesM = []; angelG = null; chestG = null; flames = []; chevrons = [];
+        scene.background = new T.Color(ch.fog); scene.fog.color.set(ch.fog);
+        for (const t of [torchL, torchR, torchL2, torchR2]) t.color.set(ch.light);
+        // Floor: one hand-laid flagstone slab per room (never a repeating tile), bump-mapped so the joints catch the light,
+        // then soft occlusion toward the walls and a carpet from the entrance to the door.
+        const th = ch.th || { tiles: ['floor', 'floor_dirt'], wall: 'wall', wall2: 'wall_cracked', banner: 'banner', obst: [], deco: ['candles', 'rubble', 'coins', 'barrels'], fx: 'dust' };
+        let s = S.chapter * 13 + S.room;
+        const rr = () => { s = (s * 16807) % 2147483647; return s / 2147483647; };
+        { const fl = stoneFloor(S.chapter * 100 + S.room, ch.floor, th.tiles[0]);
+          const floor = new T.Mesh(new T.PlaneGeometry(2 * RW + 2, 2 * RH + 2).rotateX(-Math.PI / 2), new T.MeshLambertMaterial({ map: fl.map, bumpMap: fl.bump, bumpScale: 2.2 }));
+          floor.receiveShadow = true; room.add(floor);
+          // The floor runs on past the open front (the lower camera sees it) so no black band shows under the room.
+          const apron = new T.Mesh(new T.PlaneGeometry(2 * RW + 2, 16).rotateX(-Math.PI / 2), new T.MeshLambertMaterial({ map: fl.map, color: '#d8d0c4' }));
+          apron.position.set(0, -0.01, RH + 1 + 8); apron.receiveShadow = true; room.add(apron); }
+        { const ao = new T.Mesh(new T.PlaneGeometry(2 * RW + 2, 2 * RH + 2).rotateX(-Math.PI / 2), new T.MeshBasicMaterial({ map: aoTex, transparent: true, depthWrite: false })); ao.position.y = 0.02; ao.renderOrder = 1; room.add(ao); }
+        if (ch.carpet !== false) {
+          const ct = carpetTex.clone(); ct.needsUpdate = true; ct.repeat.set(1, 3.5); ct.userData.own = true;
+          const carpet = new T.Mesh(new T.PlaneGeometry(2.8, 2 * RH).rotateX(-Math.PI / 2), new T.MeshLambertMaterial({ map: ct, color: ch.carpet || '#ffffff' }));
+          carpet.position.set(0, 0.05, 0); room.add(carpet);
+        }
+        // Water / lava / ice: irregular pools with a rim near the walls and in open spots (decoration only: they
+        // never block or hurt). Lava gets a dark rock crust, a hot glow and rising embers.
+        pools = [];
+        if (th.pool) {
+          const kind = th.pool, lava = kind === 'lava', tx = poolTex[kind];
+          tx.repeat.set(lava ? 0.12 : 0.25, lava ? 0.12 : 0.25);
+          const fill = poolMat(kind);
+          const rimMat = new T.MeshLambertMaterial({ color: lava ? '#2b1a14' : kind === 'ice' ? '#e8f6ff' : '#3c5a5a' });
+          const glowMat = lava ? new T.MeshBasicMaterial(Object.assign({ map: glowTex, color: '#ff6a1a', opacity: 0.55 }, add)) : null;
+          const blob = (r, seed) => {
+            const sh = new T.Shape(), n = 28;
+            for (let k = 0; k <= n; k++) { const a = k / n * Math.PI * 2, rr = r * (1 + 0.16 * Math.sin(3 * a + seed) + 0.09 * Math.sin(5 * a + seed * 2.3) + 0.05 * Math.sin(9 * a + seed)); k ? sh.lineTo(Math.cos(a) * rr, Math.sin(a) * rr) : sh.moveTo(Math.cos(a) * rr, Math.sin(a) * rr); }
+            return new T.ShapeGeometry(sh, 2).rotateX(-Math.PI / 2);
+          };
+          const spots = [];
+          for (let k = 0; k < 4; k++) spots.push([(k % 2 ? 1 : -1) * (RW - 2.6 - rr() * 1.5), -RH + 6 + k * (2 * RH - 12) / 3 + rr() * 3, 2 + rr() * 1.2]);
+          for (let k = 0; k < 3; k++) spots.push([(rr() < 0.5 ? -1 : 1) * (4 + rr() * 4), -RH + 6 + rr() * (2 * RH - 14), 1.6 + rr() * 1.2]);
+          for (const [x, z, r] of spots) {
+            if (S.props.some(o => Math.hypot(o.x - x, o.z - z) < o.r + r + 0.6) || Math.abs(x) - r < 2.2) continue; // off the carpet
+            const seed = rr() * 10, rot = rr() * 6;
+            const rim = new T.Mesh(blob(r + (lava ? 0.45 : 0.25), seed), rimMat); rim.position.set(x, 0.05, z); rim.rotation.y = rot; room.add(rim);
+            const m = new T.Mesh(blob(r, seed), fill); m.position.set(x, 0.07, z); m.rotation.y = rot; room.add(m);
+            if (lava) { const gl = new T.Mesh(new T.PlaneGeometry(r * 3.4, r * 3.4).rotateX(-Math.PI / 2), glowMat); gl.position.set(x, 0.12, z); room.add(gl); }
+            pools.push({ x, z, r, kind });
+          }
+          pools.tx = tx; pools.lava = lava; pools.glow = glowMat; pools.mat = fill;
+        }
+        // The game reads the pools too: lava burns, ice and water slow whoever walks in.
+        S.hazards = pools.map(q => ({ x: q.x, z: q.z, r: q.r, kind: q.kind }));
+        // Walls: back wall with the door, side walls with pillars every 8 units; the front stays open.
+        const back = [], side = [], cracked = [];
+        for (let ix = 0; ix < 7; ix++) if (ix !== 3) (ix % 3 === 1 ? cracked : back).push([-12 + ix * 4, 0, -RH - 0.5, 0]);
+        for (let iz = 0; iz < 11; iz++) for (const sx of [-1, 1]) side.push([sx * (RW + 0.5), 0, -20 + iz * 4, Math.PI / 2]);
+        // Two more courses of wall over the back wall (and the corners), with torches: the lower camera sees above it.
+        for (const y of [4, 8]) for (let ix = 0; ix < 7; ix++) ((ix + y / 4) % 3 === 0 ? cracked : back).push([-12 + ix * 4, y, -RH - 0.5, 0]);
+        for (const y of [4, 8]) for (const sx of [-1, 1]) for (const z of [-20, -16]) side.push([sx * (RW + 0.5), y, z, Math.PI / 2]);
+        placeInst(th.wall, back.concat(side)); placeInst(th.wall2, cracked);
+        placeInst('torch', [[-8, 5.6, -RH + 0.2, 0], [8, 5.6, -RH + 0.2, 0], [0, 9.6, -RH + 0.2, 0]], 1.4);
+        flame(-8, 7.2, -RH + 0.6); flame(8, 7.2, -RH + 0.6); flame(0, 11.2, -RH + 0.6);
+        placeInst(th.banner, [[-3.5, 5, -RH + 0.1], [3.5, 5, -RH + 0.1]], 1);
+        placeInst('wall_door', [[0, 0, -RH - 0.5, 0]]);
+        const pil = [[-RW - 0.5, 0, -RH - 0.5], [RW + 0.5, 0, -RH - 0.5]];
+        for (const z of [-12, -4, 4, 12]) for (const sx of [-1, 1]) pil.push([sx * (RW + 0.1), 0, z]);
+        placeInst('pillar_deco', pil, 0.75);
+        const tor = [];
+        for (const z of [-12, -4, 4, 12]) for (const sx of [-1, 1]) { tor.push([sx * (RW - 0.35), 1.7, z + 1.2, -sx * Math.PI / 2]); flame(sx * (RW - 0.75), 3.25, z + 1.2); }
+        placeInst('torch', tor, 1.4);
+        placeInst(th.banner, [[-6, 1, -RH + 0.1], [6, 1, -RH + 0.1]], 1);
+        torchL.position.set(-RW + 2, 4, -10); torchR.position.set(RW - 2, 4, -10); torchL2.position.set(-RW + 2, 4, 8); torchR2.position.set(RW - 2, 4, 8);
+        // Clutter along the walls (decoration only, kept out of the walking area).
+        const deco = {};
+        for (let k = 0; k < 10; k++) {
+          const sx = rr() < 0.5 ? -1 : 1, z = -RH + 3 + rr() * (2 * RH - 6), kind = th.deco[Math.floor(rr() * th.deco.length)];
+          (deco[kind] = deco[kind] || []).push([sx * (RW - 0.7), 0, z, rr() * 6, decoScale(kind)]);
+        }
+        for (const k in deco) placeInst(k, deco[k]);
+        for (const k of ['candles', 'candle_lit', 'fire_basket', 'post']) (deco[k] || []).forEach(c => flame(c[0], k === 'post' ? 2.6 : 1.1, c[2], k === 'fire_basket' ? '#ff7a2a' : k === 'post' ? '#b6ff6a' : '#ffd27a'));
+        // Obstacles.
+        for (const o of S.props) {
+          const g = propGeo(o.kind), u = g.userData, k = (o.r * 2.1) / Math.max(u.w, u.d);
+          const m = new T.Mesh(g, propMat); m.castShadow = m.receiveShadow = true; m.position.set(o.x, 0, o.z); m.rotation.y = o.rot; m.scale.setScalar(Math.min(k, 2.8 / u.h)); room.add(m); // at most 2.8 tall: never hides enemies
+        }
+        // Floor traps match the place: spikes in crypts, fire vents over lava, ice spikes on glaciers, geysers in flooded halls.
+        const trap = th.pool === 'lava' ? 'fire' : th.pool === 'ice' ? 'ice' : th.pool === 'water' ? 'geyser' : 'spikes';
+        for (const sp of S.spikes) {
+          const g = new T.Group(); g.position.set(sp.x, 0, sp.z); room.add(g);
+          const t = { kind: trap, g, rise: null, glow: null };
+          if (trap === 'spikes') { t.rise = new T.Mesh(propGeo('spikes'), propMat); g.add(t.rise); }
+          else {
+            // A low rocky vent ring with a dark mouth instead of a tile, so the trap sits in the floor of any theme.
+            const ringC = trap === 'fire' ? '#2a1712' : trap === 'ice' ? '#bfe3f2' : '#34525a', mouthC = trap === 'fire' ? '#120604' : trap === 'ice' ? '#5aa8cf' : '#0c2a36';
+            const vent = new T.Mesh(new T.CylinderGeometry(1.45, 1.75, 0.24, 9), new T.MeshLambertMaterial({ color: ringC, flatShading: true })); vent.position.y = 0.12; vent.receiveShadow = true; g.add(vent);
+            const mouth = new T.Mesh(new T.CircleGeometry(1.05, 9).rotateX(-Math.PI / 2), new T.MeshBasicMaterial({ color: mouthC })); mouth.position.y = 0.25; g.add(mouth);
+            if (trap === 'ice') {
+              t.rise = new T.Group();
+              const im = new T.MeshLambertMaterial({ color: '#d8f4ff', emissive: '#2a7fb0', transparent: true, opacity: 0.92, flatShading: true });
+              for (let k = 0; k < 7; k++) { const c = new T.Mesh(new T.ConeGeometry(0.32, 1.6 + (k % 3) * 0.5, 5), im); const a = k / 7 * Math.PI * 2, r = k ? 1.05 : 0; c.position.set(Math.sin(a) * r, 0.8, Math.cos(a) * r); c.rotation.set(Math.sin(a) * 0.25, 0, Math.cos(a) * 0.25); t.rise.add(c); }
+              g.add(t.rise);
+            } else if (trap === 'geyser') {
+              t.rise = new T.Mesh(new T.CylinderGeometry(0.9, 1.3, 5, 16, 1, true).translate(0, 2.5, 0), new T.MeshBasicMaterial(Object.assign({ color: '#7fd8ff', opacity: 0.55, side: T.DoubleSide }, add)));
+              g.add(t.rise);
+            }
+            t.glow = new T.Mesh(discGeo, new T.MeshBasicMaterial(Object.assign({ map: glowTex, color: trap === 'fire' ? '#ff5a10' : trap === 'ice' ? '#8fe6ff' : '#5fc8ff', opacity: 0 }, add)));
+            t.glow.scale.setScalar(2.4); t.glow.position.y = 0.27; g.add(t.glow);
+          }
+          spikesM.push(t);
+        }
+        // Door: a barrier while closed; a glowing portal, an arrow and floor chevrons once the room is clear.
+        door = new T.Mesh(propGeo('barrier'), propMat); door.position.set(0, 0, -RH + 0.4); door.scale.setScalar(0.9); room.add(door);
+        portal = new T.Mesh(new T.PlaneGeometry(3.4, 4.2).translate(0, 2.1, 0), new T.MeshBasicMaterial(Object.assign({ map: portalTex, side: T.DoubleSide }, add)));
+        portal.position.set(0, 0, -RH + 0.3); room.add(portal);
+        doorArrow = new T.Group();
+        const arrowMat = new T.MeshBasicMaterial({ color: '#7dffae' });
+        doorArrow.add(new T.Mesh(new T.ConeGeometry(0.9, 1.4, 4).rotateX(Math.PI), arrowMat), new T.Mesh(new T.BoxGeometry(0.5, 1.2, 0.5).translate(0, 1.2, 0), arrowMat));
+        doorArrow.position.set(0, 6, -RH + 1); room.add(doorArrow);
+        for (let k = 0; k < 6; k++) { const c = new T.Mesh(new T.PlaneGeometry(2.2, 2.2).rotateX(-Math.PI / 2), new T.MeshBasicMaterial(Object.assign({ map: chevTex, color: '#7dffae' }, add))); c.position.set(0, 0.08, -RH + 3 + k * 3); room.add(c); chevrons.push(c); }
+        if (S.angel) buildAngel(S.angel.x, S.angel.z);
+        ents.forEach(g => dyn.remove(g)); ents.clear();
+        heroRing = new T.Mesh(new T.PlaneGeometry(3, 3).rotateX(-Math.PI / 2), new T.MeshBasicMaterial(Object.assign({ map: ringTex, color: '#46e0ff' }, add)));
+        heroRing.position.y = 0.07; room.add(heroRing);
+        // A soft pool of light around the hero keeps dark outfits readable on the stone floor (cheaper than a light).
+        const pool = new T.Mesh(new T.PlaneGeometry(7, 7).rotateX(-Math.PI / 2), new T.MeshBasicMaterial(Object.assign({ map: heroPoolTex, color: '#ffe2b0', opacity: 0.32 }, add)));
+        pool.position.y = 0.06; heroRing.userData.pool = pool; room.add(pool);
+        makeDust(); setAmb(th.fx);
+      }
+      // Decoration of any pack drawn about 1.3 units wide (dungeon props are big, graveyard/holiday ones tiny).
+      function decoScale(kind) { const u = propGeo(kind).userData, w = Math.max(u.w, u.d) || 1; return Math.max(0.5, Math.min(3, 1.1 / w)); }
+      function setAmb(kind) { amb = AMB[kind] || AMB.dust; if (dust) { dust.material.color.set(amb[0]); dust.material.size = amb[1]; dust.visible = true; } }
+      // Boss chest: drops from above with a bounce, glows on a golden ring under a light beam, shakes and bursts open.
+      function buildChest(c) {
+        const g = new T.Group(); g.position.set(c.x, 0, c.z); room.add(g);
+        const box = placeInst('chest_gold', [[0, 0, 0, 0]], 1); room.remove(box); g.add(box);
+        const glow = new T.Mesh(new T.PlaneGeometry(9, 9).rotateX(-Math.PI / 2), new T.MeshBasicMaterial(Object.assign({ map: glowTex, color: '#ffb347', opacity: 0.7 }, add))); glow.position.y = 0.06; g.add(glow);
+        const trim = new T.Mesh(new T.TorusGeometry(2.6, 0.09, 8, 56).rotateX(Math.PI / 2), new T.MeshBasicMaterial(Object.assign({ color: '#ffd56a', opacity: 0.9 }, add))); trim.position.y = 0.1; g.add(trim);
+        const beam = new T.Mesh(new T.CylinderGeometry(1.4, 2.2, 14, 24, 1, true).translate(0, 7, 0), new T.MeshBasicMaterial(Object.assign({ map: beamTex, color: '#ffcf5a', side: T.DoubleSide, opacity: 0.35 }, add))); g.add(beam);
+        const halo = new T.Sprite(new T.SpriteMaterial(Object.assign({ map: glowTex, color: '#ffe08a', opacity: 0.8 }, add))); halo.position.y = 1.6; halo.scale.setScalar(5); g.add(halo);
+        return { g, box, glow, trim, beam, halo, landed: false, burst: false };
+      }
+      function animChest(c, dt) {
+        const k = chestG, t = c.t, S0 = 3.1, time = performance.now() / 1000;
+        // Drop: from 12 units up, bouncing twice on landing.
+        const d = Math.min(1, t / 0.7), bounce = d < 0.6 ? 1 - (d / 0.6) * (d / 0.6) : d < 0.85 ? 0.12 * Math.sin((d - 0.6) / 0.25 * Math.PI) : 0.03 * Math.sin((d - 0.85) / 0.15 * Math.PI);
+        k.box.position.y = Math.max(0, bounce) * (d < 0.6 ? 12 : 4);
+        if (!k.landed && d >= 0.6) { k.landed = true; ring(c.x, c.z, '#ffd23f', 7, 0.7); flare(c.x, 1, c.z, '#ffe08a', 10, 0.5);
+          for (let n = 0; n < 30; n++) { const a = Math.random() * 6.28; emit(sparks, c.x, 0.4, c.z, Math.sin(a) * rnd(3, 7), rnd(2, 6), Math.cos(a) * rnd(3, 7), rnd(0.5, 0.9), '#ffd23f'); } }
+        const op = c.open >= 0 ? c.open : 0, sh = op > 0 && op < 0.55 ? (op / 0.55) * 0.22 : 0;
+        k.box.scale.setScalar(S0 * (1 + Math.min(op, 0.55) * 0.35 + (c.open < 0 ? 0.04 * Math.sin(time * 3) : 0)));
+        k.box.position.x = sh * Math.sin(time * 70); k.box.rotation.y = -0.35 + (c.open < 0 ? 0.12 * Math.sin(time * 1.3) : sh * Math.sin(time * 55));
+        const pulse = 0.5 + 0.5 * Math.sin(time * 3.5);
+        k.glow.material.opacity = 0.45 + 0.35 * pulse + op; k.trim.rotation.y = time * 0.8; k.trim.scale.setScalar(1 + 0.05 * pulse);
+        k.beam.material.opacity = 0.22 + 0.15 * pulse + op * 0.6; k.beam.scale.set(1 + op * 0.6, 1, 1 + op * 0.6); k.halo.material.opacity = 0.5 + 0.3 * pulse + op;
+        if (k.landed && Math.random() < dt * (c.open >= 0 ? 60 : 14)) emit(sparks, c.x + rnd(-1.6, 1.6), rnd(0.3, 1.5), c.z + rnd(-1.6, 1.6), 0, rnd(2, 5), 0, rnd(0.6, 1.1), Math.random() < 0.7 ? '#ffd23f' : '#fff3c0');
+        if (c.open > 0.55 && !k.burst) {
+          k.burst = true; ring(c.x, c.z, '#fff3c0', 9, 0.8); ring(c.x, c.z, '#ffb12a', 13, 1.1); flare(c.x, 2, c.z, '#fff6d0', 18, 0.7);
+          for (let n = 0; n < 80; n++) { const a = Math.random() * 6.28, v = rnd(4, 12); emit(sparks, c.x, 1.4, c.z, Math.sin(a) * v, rnd(4, 12), Math.cos(a) * v, rnd(0.7, 1.4), ['#ffd23f', '#fff3c0', '#ff9a2a', '#3fe8ff'][n % 4], -10); }
+        }
+      }
+      // The angel: a winged figure in white and gold with a halo and a beam of light (not a recoloured hero).
+      function buildAngel(x, z) {
+        const g = charMesh('angel', 1.25, { color: '#e6dcc6', emissive: '#140f04' }); // toned down: the white angel glared
+        const ws = new T.Shape();
+        ws.moveTo(0, 0); ws.bezierCurveTo(0.8, 0.6, 1.8, 2.2, 3, 2.8); ws.bezierCurveTo(2.7, 2.1, 2.9, 1.6, 2.6, 1.2);
+        ws.bezierCurveTo(2.3, 1.0, 2.4, 0.5, 2.0, 0.3); ws.bezierCurveTo(1.6, 0.1, 1.5, -0.4, 1.0, -0.5); ws.bezierCurveTo(0.6, -0.6, 0.2, -0.3, 0, 0);
+        const wingGeo = new T.ShapeGeometry(ws, 10), wingMat = new T.MeshLambertMaterial({ color: '#e8e2d6', emissive: '#241c0c', side: T.DoubleSide });
+        const wings = [];
+        for (const sx of [-1, 1]) { const w = new T.Mesh(wingGeo, wingMat); w.scale.set(sx, 1, 1); const pivot = new T.Group(); pivot.position.set(sx * 0.25, 2.2, -0.35); pivot.add(w); g.add(pivot); wings.push(pivot); }
+        const halo = new T.Mesh(new T.TorusGeometry(0.55, 0.09, 8, 28).rotateX(Math.PI / 2), new T.MeshBasicMaterial({ color: '#ffe07a' }));
+        halo.position.y = 3.75; g.add(halo);
+        const hs = new T.Sprite(new T.SpriteMaterial(Object.assign({ map: glowTex, color: '#b89a50', opacity: 0.7 }, add))); hs.position.y = 3.75; hs.scale.setScalar(1.6); g.add(hs);
+        g.add(new T.Mesh(new T.CylinderGeometry(1.6, 2.6, 16, 24, 1, true).translate(0, 8, 0), new T.MeshBasicMaterial(Object.assign({ map: beamTex, color: '#8a7a50', opacity: 0.5, side: T.DoubleSide }, add))));
+        g.position.set(x, 0.5, z); room.add(g);
+        angelG = { g, wings, halo };
+      }
+
+      // ---------- Camera ----------
+      // Follow camera: shows ~21 of the 26 units of width (follows the hero sideways) and scrolls along z, but never
+      // past the room's front edge or far above the back wall, so no empty band appears on tall screens.
+      const HALF_W = 10.4, PITCH = 45 * Math.PI / 180; // lower than straight-down so heads and hats do not hide the bodies
+      let camX = 0, camZ = 0, camD = 0, zLo = 0, zHi = 0, camKey = '';
+      const v3 = new T.Vector3();
+      function placeCam(x, z) {
+        camera.position.set(x, Math.sin(PITCH) * camD, z + Math.cos(PITCH) * camD + 2);
+        camera.lookAt(x, 0, z + 2);
+        camera.updateMatrixWorld();
+      }
+      function camLimits() {
+        const W = canvas.clientWidth || innerWidth, H = canvas.clientHeight || innerHeight;
+        camD = HALF_W / Math.tan(Math.atan(Math.tan(camera.fov * Math.PI / 360) * W / H));
+        // Screen y (0 top .. 1 bottom) of a world point for a given camZ; both limits are found by bisection.
+        const screenY = (z, h, cz) => { placeCam(0, cz); v3.set(0, h, z).project(camera); return (1 - v3.y) / 2; };
+        const solve = (f, target) => { let a = -40, b = 40; for (let i = 0; i < 30; i++) { const m = (a + b) / 2; if (f(m) > target) a = m; else b = m; } return (a + b) / 2; };
+        zHi = solve(cz => screenY(RH + 0.5, 0, cz), 1);      // camZ <= zHi: front edge at or below the screen bottom
+        zLo = solve(cz => screenY(-RH - 0.5, 4, cz), 0.07);  // camZ >= zLo: back wall top no lower than the HUD
+        if (zLo > zHi) zLo = zHi = (zLo + zHi) / 2;
+        camKey = W + 'x' + H;
+      }
+      function camRoom(S, dt) {
+        const W = canvas.clientWidth || innerWidth, H = canvas.clientHeight || innerHeight;
+        if (camKey !== W + 'x' + H) camLimits();
+        const tx = S ? Math.max(-(RW + 1 - HALF_W), Math.min(RW + 1 - HALF_W, S.p.x * 0.5)) : 0;
+        // Once the room is clear the camera leans toward the door so the way out is on screen.
+        const look = S && S.door && !(S.angel && !S.angel.used) ? S.p.z - 10 : S ? S.p.z - 4 : 0;
+        const tz = S ? Math.max(zLo, Math.min(zHi, look)) : 0;
+        if (S && S.t < 0.05 && (!S.intro || S.intro.t < 0.05)) { camX = tx; camZ = tz; }
+        const k = Math.min(1, dt * 4);
+        camX += (tx - camX) * k; camZ += (tz - camZ) * k;
+        // Boss entrance: ease in on the boss (closer and lower), hold, ease back.
+        let zi = 0;
+        if (S && S.intro) { const u = S.intro.t / S.intro.dur; zi = u < 0.25 ? u / 0.25 : u > 0.8 ? (1 - u) / 0.2 : 1; zi = Math.max(0, Math.min(1, zi)); zi = zi * zi * (3 - 2 * zi); }
+        const sh = S ? (S.shake || 0) * 0.7 : 0, d0 = camD;
+        camD *= 1 - 0.26 * zi;
+        placeCam(camX + (S && S.intro ? (S.intro.x - camX) * zi : 0) + (Math.random() - 0.5) * sh, camZ + (S && S.intro ? (S.intro.z - 3 - camZ) * zi : 0) + (Math.random() - 0.5) * sh);
+        camD = d0;
+        aimSun(camX, camZ - 2);
+      }
+
+      // ---------- Menu scene: the hero on a lit dais ----------
+      let menuHero = null, celebT = 0;
+      function buildMenu(hero, ch, tint, dim, skin) {
+        aimSun(0, 0);
+        clearRoom();
+        ents.forEach(g => dyn.remove(g)); ents.clear(); flames = []; angelG = null; chestG = null;
+        makeDust();
+        scene.background = new T.Color(ch.fog); scene.fog.color.set(ch.fog);
+        const th = ch.th || { tiles: ['floor', 'floor_dirt'], wall: 'wall', wall2: 'wall_cracked', banner: 'banner', obst: [], deco: ['candles', 'rubble', 'coins', 'barrels'], fx: 'dust' };
+        const tiles = [];
+        for (let ix = -3; ix <= 3; ix++) for (let iz = -3; iz <= 2; iz++) tiles.push([ix * 4, -0.2, iz * 4, 0]);
+        placeInst(th.tiles[0], tiles);
+        placeInst(th.wall, [[-12, 0, -9.5, 0], [-8, 0, -9.5, 0], [-4, 0, -9.5, 0], [4, 0, -9.5, 0], [8, 0, -9.5, 0], [12, 0, -9.5, 0]]);
+        placeInst('wall_door', [[0, 0, -9.5, 0]]);
+        // A tall hall behind the hero: three more rows of wall with torches and banners (no empty sky on tall phones).
+        const upper = [], upperCr = [];
+        for (let y = 4; y <= 16; y += 4) for (let x = -12; x <= 12; x += 4) ((x / 4 + y / 4) % 3 === 0 ? upperCr : upper).push([x, y, -9.5, 0]);
+        placeInst(th.wall, upper); placeInst(th.wall2, upperCr);
+        placeInst('torch', [[-6, 5.6, -8.8, 0], [6, 5.6, -8.8, 0], [-10, 9.6, -8.8, 0], [10, 9.6, -8.8, 0], [0, 13.6, -8.8, 0]], 1.4);
+        flame(-6, 7.2, -8.4); flame(6, 7.2, -8.4); flame(-10, 11.2, -8.4); flame(10, 11.2, -8.4); flame(0, 15.2, -8.4);
+        placeInst(th.banner, [[-2.6, 5, -8.95], [2.6, 5, -8.95], [-6, 9, -8.95], [6, 9, -8.95]], 1);
+        const dk = {}; th.deco.forEach((k, i) => { (dk[k] = dk[k] || []).push([i % 2 ? 5.4 : -5.2, 0, -2.4 - i * 1.4, i, decoScale(k)]); });
+        for (const k in dk) placeInst(k, dk[k]);
+        setAmb(th.fx);
+        placeInst('pillar_deco', [[-6, 0, -8.6], [6, 0, -8.6]], 0.8);
+        placeInst('torch', [[-2.6, 1.6, -8.8, 0], [2.6, 1.6, -8.8, 0]], 1.4);
+        flame(-2.6, 3.2, -8.4); flame(2.6, 3.2, -8.4);
+        placeInst(th.banner, [[-4.2, 1, -8.95], [4.2, 1, -8.95]], 1);
+        placeInst('chest_gold', [[4.6, 0, -4.5, -0.6]], 1); placeInst('coins', [[3.4, 0, -2.6, 0]], 0.8);
+        // Dais with a glowing ring under the hero.
+        const dais = new T.Mesh(new T.CylinderGeometry(2.4, 2.7, 0.5, 40), new T.MeshLambertMaterial({ color: '#4a3a30' })); dais.position.y = 0.05; dais.receiveShadow = true; room.add(dais);
+        const trim = new T.Mesh(new T.TorusGeometry(2.45, 0.08, 8, 48).rotateX(Math.PI / 2), new T.MeshBasicMaterial({ color: '#ffd56a' })); trim.position.y = 0.32; room.add(trim);
+        const glow = new T.Mesh(new T.PlaneGeometry(7, 7).rotateX(-Math.PI / 2), new T.MeshBasicMaterial(Object.assign({ map: glowTex, color: '#ffb347', opacity: 0.6 }, add))); glow.position.y = 0.33; room.add(glow);
+        torchL.position.set(-2.6, 4, -6); torchR.position.set(2.6, 4, -6); torchL2.position.set(-7, 3, 2); torchR2.position.set(7, 3, 2);
+        for (const t of [torchL, torchR, torchL2, torchR2]) t.color.set(ch.light);
+        const h = charMesh(hero, 2); h.userData.tinted = !!tint; if (tint) { h.userData.m.material.color.set(tint); h.userData.m.material.emissive && h.userData.m.material.emissive.set(tint).multiplyScalar(0.38); }
+        if (dim) { h.userData.m.material.color.set('#2c2c3a'); h.userData.m.material.emissive && h.userData.m.material.emissive.set('#0a0a18'); } h.position.set(0, 0.3, 0); room.add(h); menuHero = h;
+        if (skin && !dim) dress(h, hero, skin);
+      }
+
+      const R = {
+        // Outfit portrait: the hero alone in a studio light, turned by `angle`, framed head to toe (used to bake art).
+        portrait(name, skin, angle) {
+          const ps = new T.Scene();
+          ps.add(new T.HemisphereLight(0xffffff, 0x50406a, 1.25));
+          const key = new T.DirectionalLight(0xfff0dc, 2.4); key.position.set(-3, 6, 8); ps.add(key);
+          const rimL = new T.DirectionalLight(0x9fc4ff, 1.6); rimL.position.set(5, 4, -6); ps.add(rimL);
+          const g = charMesh(name, 2); g.remove(g.children[2]); // no blob shadow
+          if (skin) dress(g, name, skin);
+          const mat = g.userData.m.material; if (skin && skin.glow && mat.emissive) mat.emissive.setRGB(0.75, 0.75, 0.75);
+          pose(g.userData.m, 6, 4, 0.12); g.rotation.y = angle || 0; ps.add(g);
+          if (g.userData.top) g.userData.top.position.y = g.userData.headY * 0.94;
+          if (g.userData.orbs) g.userData.orbs.forEach((o, k) => { const a = k * 2.094 + 0.6; o.position.set(Math.sin(a) * 1.9, g.userData.headY * 0.5, Math.cos(a) * 1.9); o.scale.setScalar(0.9); });
+          const geo = g.userData.m.geometry; if (!geo.boundingBox) geo.computeBoundingBox();
+          const top = (g.userData.top ? g.userData.headY * 0.94 + 0.9 : geo.boundingBox.max.y * 2) + 0.15, W = canvas.width, H = canvas.height;
+          const cam = new T.PerspectiveCamera(28, W / H, 0.5, 100), mid = top / 2, dist = (top * 0.56) / Math.tan(14 * Math.PI / 180);
+          cam.position.set(0, mid + 0.6, dist); cam.lookAt(0, mid, 0);
+          renderer.setClearColor(0x000000, 0); renderer.setViewport(0, 0, W, H); renderer.setScissorTest(false);
+          renderer.render(ps, cam);
+          return canvas.toDataURL('image/png');
+        },
+        mem() { return Object.assign({ floors: floorCache.size }, renderer.info.memory); }, // test hook: GPU objects alive
+        is3D: true,
+        fit() { const W = canvas.clientWidth || innerWidth, H = canvas.clientHeight || innerHeight; renderer.setSize(W, H, false); camera.aspect = W / H; camera.updateProjectionMatrix(); camKey = ''; },
+        project(x, z, h) { v3.set(x, h || 0, z).project(camera); const W = canvas.clientWidth || innerWidth, H = canvas.clientHeight || innerHeight; return { x: (v3.x + 1) / 2 * W, y: (1 - v3.y) / 2 * H }; },
+        setRoom(S, ch) { level = S; menuKey = ''; buildRoom(S, ch); },
+        setMenu(hero, ch, tint, dim, skin) { const k = hero + (tint || '') + (dim ? 'd' : '') + (skin ? skin.id : '') + ch.fog + (ch.th ? ch.th.wall + ch.th.fx : ''); if (k === menuKey) return; menuKey = k; level = null; buildMenu(hero, ch, tint, dim, skin); },
+        // Outfit put on: the menu hero hops and spins in a burst of the outfit's colours.
+        celebrate() {
+          celebT = 1; const sk = menuHero && menuHero.userData.skin, c = sk ? sk.fx.cols : ['#ffd23f', '#fff3c0'];
+          for (let k = 0; k < 90; k++) { const a = Math.random() * 6.28, v = rnd(2, 7); emit(sparks, 0, rnd(1, 4), 0, Math.sin(a) * v, rnd(1, 6), Math.cos(a) * v, rnd(0.6, 1.2), c[k % c.length], 5); }
+          ring(0, 0, c[0], 7, 0.8); flare(0, 3, 0, c[0], 14, 0.7); screenFlash(c[0], 0.55);
+        },
+        fx,
+        render(S, dt, mode) {
+          const time = performance.now() / 1000;
+          if (slowShadows && (shadowTick = (shadowTick + 1) % 3) === 0) renderer.shadowMap.needsUpdate = true;
+          // Adaptive quality: if frames keep running long (slow phone, hot device), lower the pixel ratio, then drop shadows.
+          if (dt > 0) {
+            perfAcc += dt; perfN++;
+            if (perfAcc > 2.5) {
+              const avg = perfAcc / perfN; perfAcc = 0; perfN = 0;
+              // Shadows go to every 3rd frame instead of off: switching them off recompiles every shader (a long freeze).
+              // Steps, cheapest-looking first: 1.75 → 1.5 pixel ratio under ~52 fps (hard to see on a phone), shadows
+              // every 3rd frame under ~45 fps, 1.25 pixel ratio under ~38 fps. Effects and models are never cut.
+              if (avg > 1 / 52 && pr > 1.5) { pr = Math.max(1.5, pr - 0.25); renderer.setPixelRatio(pr); R.fit(); }
+              else if (avg > 1 / 45 && renderer.shadowMap.autoUpdate) { renderer.shadowMap.autoUpdate = false; slowShadows = true; }
+              else if (avg > 1 / 38 && pr > 1.25) { pr = 1.25; renderer.setPixelRatio(pr); R.fit(); }
+            }
+          }
+          for (const f of flames) f.scale.setScalar(2 + Math.sin(time * 11 + f.position.z) * 0.25 + Math.sin(time * 23 + f.position.x) * 0.12);
+          const fl = 1 + Math.sin(time * 9) * 0.08;
+          torchL.intensity = torchR.intensity = torchL2.intensity = torchR2.intensity = 40 * fl;
+          if (dust) {
+            const p = dust.geometry.attributes.position;
+            for (let k = 0; k < p.count; k++) {
+              let y = p.getY(k) + dt * amb[2]; if (y > 7) y = 0.3; if (y < 0.2) y = 7;
+              p.setY(k, y); p.setX(k, p.getX(k) + Math.sin(time * 0.8 + k) * amb[3] * dt);
+            }
+            p.needsUpdate = true;
+            dust.material.opacity = amb[4] ? 0.35 + 0.35 * Math.abs(Math.sin(time * 2.2)) : 0.6;
+          }
+          if (pools.mat) pools.mat.uniforms.uT.value = time;
+          if (pools.tx) {
+            pools.tx.offset.set((time * 0.006) % 1, (time * (pools.lava ? 0.012 : 0.03)) % 1);
+            if (pools.glow) pools.glow.opacity = 0.45 + 0.15 * Math.sin(time * 2.4);
+            if (pools.lava && S) for (const pl of pools) if (Math.random() < dt * 3) emit(sparks, pl.x + (Math.random() - 0.5) * pl.r, 0.2, pl.z + (Math.random() - 0.5) * pl.r, (Math.random() - 0.5) * 0.6, 2 + Math.random() * 2, (Math.random() - 0.5) * 0.6, 0.9 + Math.random() * 0.6, Math.random() < 0.5 ? '#ff8a2a' : '#ffd34a', -0.5);
+          }
+          stepCloud(sparks, dt); stepCloud(puffs, dt);
+          for (const b of beams) { b.life -= dt; b.m.material.opacity = Math.max(0, b.life / 0.9); if (b.follow && S) b.m.position.set(S.p.x, 0, S.p.z); if (b.life <= 0) { b.m.visible = false; beamPool.push(b.m); } }
+          for (let i = beams.length - 1; i >= 0; i--) if (beams[i].life <= 0) beams.splice(i, 1);
+          stepCloud(flamesC, dt);
+          for (let i = flares.length - 1; i >= 0; i--) {
+            const f = flares[i]; f.life -= dt; const t = 1 - Math.max(0, f.life / f.max);
+            f.sp.scale.setScalar(f.size * (0.4 + 0.6 * Math.sqrt(t))); f.sp.material.opacity = Math.max(0, 1 - t * t);
+            if (f.life <= 0) { f.sp.visible = false; flarePool.push(f.sp); flares.splice(i, 1); }
+          }
+          for (let i = shards.length - 1; i >= 0; i--) {
+            const q = shards[i]; q.life -= dt; q.vy -= 22 * dt; q.m.position.x += q.vx * dt; q.m.position.y = Math.max(0.15, q.m.position.y + q.vy * dt); q.m.position.z += q.vz * dt;
+            q.m.rotation.x += q.sx * dt; q.m.rotation.z += q.sz * dt; if (q.m.position.y <= 0.15) { q.vx *= 0.7; q.vz *= 0.7; q.vy = Math.abs(q.vy) * 0.25; }
+            if (q.life < 0.25) q.m.scale.multiplyScalar(0.85);
+            if (q.life <= 0) { q.m.visible = false; shardPool.push(q.m); shards.splice(i, 1); }
+          }
+          for (let i = boltsL.length - 1; i >= 0; i--) { const b = boltsL[i]; b.life -= dt; b.g.visible = Math.random() < 0.85; if (b.life <= 0) { scene.remove(b.g); boltsL.splice(i, 1); } }
+          punch = Math.max(0, punch - dt * 5);
+          if (Math.abs(camera.fov - (BASE_FOV - punch * 5)) > 0.01) { camera.fov = BASE_FOV - punch * 5; camera.updateProjectionMatrix(); }
+          for (let i = shocks.length - 1; i >= 0; i--) {
+            const k = shocks[i]; k.life -= dt; const t = 1 - Math.max(0, k.life / k.max);
+            k.m.scale.setScalar(0.3 + k.size * t); k.m.material.opacity = Math.max(0, 1 - t);
+            if (k.life <= 0) { k.m.visible = false; ringPool.push(k.m); shocks.splice(i, 1); }
+          }
+          if (!S || mode === 'menu') {
+            // In-run skill effects live on the scene, not the room: never let one from the last run linger on the menu hero.
+            for (const o of [bubble, iceG, auraM, auraF, rageG, haloS, giantS, meteorS, ...wisdomS]) o.visible = false;
+            // Legendary / mythic gear shows on the menu hero too: aura rings, a light pillar and sparkles.
+            const mg = R.menuGear || {};
+            auraG.visible = !!mg.aura; aura2.visible = pillar.visible = !!mg.mythic; handG.visible = false;
+            if (mg.aura) { auraG.material.color.set(mg.aura); auraG.position.set(0, 0.42, 0); auraG.scale.setScalar(1.6); auraG.rotation.y = -time * 0.8; auraG.material.opacity = 0.6 + 0.2 * Math.sin(time * 3); }
+            if (mg.mythic) { tintTop(mg); aura2.position.set(0, 0.43, 0); aura2.rotation.y = time * 1.3; aura2.scale.setScalar(2.1); pillar.position.set(0, 0.3, 0); pillar.scale.set(2.4, 1.3, 2.4); pillar.material.opacity = 0.55 + 0.15 * Math.sin(time * 3);
+              if (menuHero && menuHero.userData.m.material.emissive) { const k = 0.14 * Math.sin(time * 4); if (mg.celestial) menuHero.userData.m.material.emissive.setRGB(0.03, 0.12 + k * 0.6, 0.2 + k); else menuHero.userData.m.material.emissive.setRGB(0.22 + k, 0.05, 0.03); } }
+            else if (menuHero && menuHero.userData.m.material.emissive && !menuHero.userData.tinted) menuHero.userData.m.material.emissive.setRGB(0, 0, 0);
+            else pillar.scale.set(1, 1, 1);
+            if (mg.legendary && Math.random() < dt * (mg.mythic ? 40 : 15)) emit(sparks, rnd(-1.5, 1.5), rnd(0.5, 5), rnd(-1.5, 1.5), 0, rnd(1, 2.5), 0, rnd(0.6, 1), mg.mythic ? topCol(mg) : '#ffd23f');
+            if (menuHero) { menuHero.rotation.y = Math.sin(time * 0.6) * 0.45; pose(menuHero.userData.m, 6, 4, 0.15 + 0.15 * Math.sin(time * 1.7));
+              if (celebT > 0) { celebT = Math.max(0, celebT - dt); const t = 1 - celebT, e = 1 - Math.pow(1 - t, 3); menuHero.position.y = 0.3 + Math.sin(t * Math.PI) * 1.3; menuHero.rotation.y += e * Math.PI * 2; pose(menuHero.userData.m, 6, 5, Math.sin(t * Math.PI)); }
+              skinFx(menuHero, 0, 0, false, dt, time); }
+            dyn.visible = false;
+            // Frame the whole hero (and the dais) inside a band of the screen between the top bar and the chapter
+            // card, whatever the phone's aspect: solve the distance, then shift the image up with a view offset.
+            const W = canvas.clientWidth || innerWidth, H = canvas.clientHeight || innerHeight, tf = Math.tan(camera.fov * Math.PI / 360);
+            const band = R.band || { top: 0.14, bot: 0.5 }, bot = Math.max(band.top + 0.18, band.bot - 0.02), top = Math.max(band.top, bot - 0.4), mid = 2.9;
+            const d = Math.max(6.2 / (2 * tf * (bot - top)), 8 / (2 * tf * camera.aspect)), pitch = 0.16;
+            camera.position.set(0, mid + Math.sin(pitch) * d, Math.cos(pitch) * d); camera.lookAt(0, mid, 0);
+            camera.setViewOffset(W, H, 0, Math.round((0.5 - (top + bot) / 2) * H), W, H);
+            renderer.render(scene, camera); return;
+          }
+          dyn.visible = true;
+          if (camera.view && camera.view.enabled) camera.clearViewOffset();
+          if (S !== level) R.setRoom(S, { fog: '#1a1410', light: '#ffd9a8', floor: '#8d8478' });
+          // Hero + enemies.
+          const seen = new Set();
+          const sync = (key, e, name, scale, isHero) => {
+            let g = ents.get(key);
+            if (!g) { g = charMesh(name, VS(scale)); if (isHero && S.skin) dress(g, name, S.skin); if (!isHero && e.boss) dress(g, name, bossLook(e)); if (isHero && S.heroTint) { g.userData.m.material.color.set(S.heroTint); g.userData.m.material.emissive && g.userData.m.material.emissive.set(S.heroTint).multiplyScalar(0.38); } dyn.add(g); ents.set(key, g); }
+            seen.add(key);
+            const m = g.userData.m;
+            if (isHero) heroPose(m, e); else foePose(m, e);
+            let y = 0;
+            if (!isHero && e.state === 'rise') y = -2.6 * Math.max(0, e.st / 0.8);
+            if (!isHero && e.state === 'dead') y = -Math.max(0, 0.45 - e.st) * 2;
+            g.position.set(e.x, y, e.z); g.rotation.y = e.face;
+            const mat = m.material, wind = !isHero && (e.state === 'wind' || e.state === 'aim');
+            if (mat.emissive) mat.emissive.setRGB(e.flash > 0 ? 0.9 : e.burn > 0 ? 0.35 : wind ? 0.45 + 0.25 * Math.sin(time * 30) : 0, e.flash > 0 ? 0.9 : e.slow > 0 ? 0.25 : wind ? 0.05 : 0, e.flash > 0 ? 0.9 : e.slow > 0 ? 0.5 : 0);
+            // Boss look: glow pulse, headpiece and particles (a hit flash or a wind-up glow wins over the glow).
+            if (!isHero && e.boss && e.hp > 0 && g.userData.skin && !(e.flash > 0) && !wind) skinFx(g, e.x, e.z, e.moving, dt, time);
+            if (isHero) g.visible = !(e.inv > 0 && Math.floor(e.inv * 16) % 2);
+            // Status effects you can see: burning foes flicker and shed flames and smoke, frozen ones turn blue and drip frost.
+            if (!isHero && e.hp > 0) {
+              const hs = 1.6 * (scale || 1);
+              if (e.burn > 0) {
+                if (mat.emissive && !(e.flash > 0)) mat.emissive.setRGB(0.55 + 0.3 * Math.sin(time * 22 + e.x), 0.18 + 0.1 * Math.sin(time * 17), 0);
+                for (let k = 0; k < 3; k++) if (Math.random() < dt * 40) emit(flamesC, e.x + rnd(-0.45, 0.45) * hs, rnd(0.2, 1.4) * hs, e.z + rnd(-0.45, 0.45) * hs, rnd(-0.5, 0.5), rnd(2.5, 5), rnd(-0.5, 0.5), rnd(0.3, 0.6), Math.random() < 0.6 ? '#ff5a10' : '#ffc23a', -4);
+                if (Math.random() < dt * 20) emit(sparks, e.x, rnd(0.5, 2) * hs, e.z, rnd(-1.5, 1.5), rnd(3, 6), rnd(-1.5, 1.5), rnd(0.4, 0.8), '#ffd23f', -1);
+                if (Math.random() < dt * 4) emit(puffs, e.x, 2 * hs, e.z, rnd(-0.3, 0.3), 1.6, rnd(-0.3, 0.3), 0.7, '#3a2a22');
+              }
+              let crust = g.userData.crust;
+              if (e.slow > 0 && !crust) { crust = g.userData.crust = new T.Mesh(new T.IcosahedronGeometry(0.75, 0), new T.MeshLambertMaterial({ color: '#cdf3ff', emissive: '#3a9ad0', transparent: true, opacity: 0.45, flatShading: true, depthWrite: false })); crust.position.y = 1.0; g.add(crust); }
+              if (crust) { crust.visible = e.slow > 0; if (crust.visible) { crust.scale.set(hs * 0.9, hs * 1.25, hs * 0.9); crust.rotation.y += dt * 0.5; } }
+              if (e.slow > 0) {
+                if (mat.emissive && !(e.flash > 0)) mat.emissive.setRGB(0.12, 0.42, 0.75);
+                if (Math.random() < dt * 14) emit(sparks, e.x + rnd(-0.6, 0.6) * hs, rnd(1, 2.2) * hs, e.z + rnd(-0.6, 0.6) * hs, 0, rnd(-0.5, 0.3), 0, rnd(0.4, 0.8), Math.random() < 0.5 ? '#bff4ff' : '#ffffff', 3);
+              }
+            }
+            return g;
+          };
+          sync('hero', S.p, S.heroModel || S.hero, 1, true);
+          if (heroRing) { heroRing.position.set(S.p.x, 0.07, S.p.z); heroRing.rotation.y = time; heroRing.userData.pool.position.set(S.p.x, 0.06, S.p.z); }
+          // Gear on the hero: a coloured aura ring for good armour/jewels, a glow at the weapon hand, sparkles for legendaries.
+          const gl = S.gearLook || {};
+          auraG.visible = !!gl.aura; if (gl.aura) { auraG.material.color.set(gl.aura); auraG.position.set(S.p.x, 0.12, S.p.z); auraG.rotation.y = -time * 0.8; auraG.material.opacity = 0.55 + 0.15 * Math.sin(time * 3); }
+          handG.visible = !!gl.weapon; if (gl.weapon) { handG.material.color.set(gl.weapon); handG.position.set(S.p.x + Math.sin(S.p.face + 0.6) * 0.9, 1.6, S.p.z + Math.cos(S.p.face + 0.6) * 0.9); handG.scale.setScalar(1.6 + 0.25 * Math.sin(time * 6)); }
+          if (gl.legendary && Math.random() < dt * (gl.mythic ? 40 : 14)) emit(sparks, S.p.x + rnd(-0.8, 0.8), rnd(0.2, 2.6), S.p.z + rnd(-0.8, 0.8), 0, rnd(1, 2.5), 0, rnd(0.5, 0.9), gl.mythic ? topCol(gl) : Math.random() < 0.5 ? '#ffd23f' : '#fff3c0');
+          // Mythic: a second counter-rotating ring, a pillar of light and a pulsing glow on the hero.
+          aura2.visible = pillar.visible = !!gl.mythic;
+          if (gl.mythic) {
+            tintTop(gl); aura2.position.set(S.p.x, 0.13, S.p.z); aura2.rotation.y = time * 1.3; aura2.scale.setScalar(1.35 + 0.08 * Math.sin(time * 4));
+            pillar.position.set(S.p.x, 0, S.p.z); pillar.material.opacity = 0.38 + 0.12 * Math.sin(time * 3);
+            const hm = ents.get('hero'); if (hm && hm.userData.m.material.emissive && !(S.p.inv > 0)) { const k = 0.12 * Math.sin(time * 5); if (gl.celestial) hm.userData.m.material.emissive.setRGB(0.02, 0.1 + k * 0.6, 0.17 + k); else hm.userData.m.material.emissive.setRGB(0.18 + k, 0.03, 0.02); }
+          }
+          { const hm = ents.get('hero'); if (hm && !(S.p.inv > 0)) skinFx(hm, S.p.x, S.p.z, S.p.moving, dt, time); }
+          bubble.visible = !!S.shieldOn; if (bubble.visible) { bubble.position.set(S.p.x, 1.5, S.p.z); bubble.scale.setScalar(2.3 + 0.08 * Math.sin(time * 5)); bubbleMat.uniforms.t.value = time; bubble.rotation.y = time * 0.3;
+            if (Math.random() < dt * 6) { const a = Math.random() * 6.28, b = Math.random() * 3.14; emit(sparks, S.p.x + Math.sin(a) * Math.sin(b) * 2.3, 1.5 + Math.cos(b) * 2.3, S.p.z + Math.cos(a) * Math.sin(b) * 2.3, 0, 0.3, 0, 0.4, '#bfeaff'); } }
+          // Passive skills show on the hero, in the same sparkle language as the gear glow.
+          { const ps = S.skills || {}, hx = S.p.x, hz = S.p.z, mv = S.p.moving, bx = -Math.sin(S.p.face), bz = -Math.cos(S.p.face);
+            if ((ps.boots || ps.move) && mv && Math.random() < dt * (10 + 6 * (ps.boots || 0))) { emit(puffs, hx + bx * 0.6 + rnd(-0.3, 0.3), 0.2, hz + bz * 0.6 + rnd(-0.3, 0.3), bx * 0.8, rnd(0.2, 0.5), bz * 0.8, 0.45, '#e2f4ff'); emit(sparks, hx + rnd(-0.4, 0.4), rnd(0.4, 1.2), hz + rnd(-0.4, 0.4), bx * 3, 0.1, bz * 3, 0.3, '#bff0ff'); }
+            if ((ps.hpS || ps.hp) && Math.random() < dt * (2 + (ps.hpS || 0) + (ps.hp || 0))) { const a = Math.random() * 6.28; emit(sparks, hx + Math.sin(a) * 0.9, 0.3, hz + Math.cos(a) * 0.9, 0, rnd(2, 3.2), 0, 0.6, '#ffcf5a', -0.5); }
+            if (ps.greed && Math.random() < dt * 3 * ps.greed) emit(sparks, hx + rnd(-0.7, 0.7), rnd(1, 2.4), hz + rnd(-0.7, 0.7), 0, -0.6, 0, 0.7, Math.random() < 0.5 ? '#ffd23f' : '#fff3a0', 1);
+            wisdomS.forEach((s, k) => { s.visible = !!ps.wisdom; if (s.visible) { const a = time * 2.2 + k * Math.PI; s.position.set(hx + Math.sin(a) * 1.1, 2.9 + 0.25 * Math.sin(time * 3 + k), hz + Math.cos(a) * 1.1); s.scale.setScalar(0.7 + 0.15 * Math.sin(time * 6 + k)); if (Math.random() < dt * 8) emit(sparks, s.position.x, s.position.y, s.position.z, 0, -0.3, 0, 0.4, '#a8d8ff'); } });
+            const raging = !!ps.rage && S.p.hp < S.p.max / 2;
+            rageG.visible = raging; if (raging) { rageG.position.set(hx, 0.14, hz); rageG.scale.setScalar(2.2 + 0.3 * Math.sin(time * 9)); rageG.material.opacity = 0.45 + 0.2 * Math.sin(time * 9); if (Math.random() < dt * 22) emit(flamesC, hx + rnd(-0.6, 0.6), 0.4, hz + rnd(-0.6, 0.6), 0, rnd(1.5, 3), 0, 0.4, Math.random() < 0.5 ? '#ff2a1a' : '#ff8a3a', -2); }
+            haloS.visible = !!ps.second && !S.secondUsed; if (haloS.visible) { haloS.position.set(hx, 4.1 + 0.08 * Math.sin(time * 3), hz); haloS.rotation.y = time; }
+            const bossOn = !!ps.giant && S.enemies.some(e => e.boss && e.hp > 0);
+            giantS.visible = bossOn; if (bossOn) { giantS.position.set(hx + Math.sin(S.p.face - 0.6) * 0.9, 1.6, hz + Math.cos(S.p.face - 0.6) * 0.9); giantS.scale.setScalar(1.5 + 0.3 * Math.sin(time * 12)); if (Math.random() < dt * 14) emit(flamesC, giantS.position.x, 1.6, giantS.position.z, 0, rnd(1, 2), 0, 0.3, '#ff5a2a', -2); }
+          }
+          S.enemies.forEach(e => { if (!e.key) e.key = 'e' + (++uid); sync(e.key, e, e.kind, e.scale, false); });
+          ents.forEach((g, k) => { if (!seen.has(k)) { dyn.remove(g); ents.delete(k); } });
+          // Projectiles with light trails.
+          const kind = S.shotKind || 'bolt';
+          if (kind !== shotKind) { shotKind = kind; shots.list.forEach(m => { m.geometry = SHOT_GEO[kind]; m.material = shotMat[kind]; }); }
+          // Elemental arrows: the trail and the sparks it sheds follow the element the hero has picked.
+          const skl = S.skills || {}, elemCol = skl.fire ? '#ff7a1a' : skl.ice ? '#8fe6ff' : skl.bolt ? '#c77dff' : null;
+          const elemCol2 = skl.fire ? '#ffd23f' : skl.ice ? '#ffffff' : '#f2d4ff', elemUp = skl.ice && !skl.fire ? -0.5 : 1.5;
+          S.shots.forEach((s, i) => {
+            const m = shots.get(i); m.geometry = SHOT_GEO[kind]; m.material = shotMat[kind]; m.position.set(s.x, 1.3, s.z); m.rotation.set(0, s.a + (kind === 'axe' || kind === 'blade' ? time * 14 : 0), 0);
+            const t = trails.get(i); t.position.set(s.x, 1.3, s.z); t.rotation.set(0, s.a, 0); t.material.color.set(elemCol || SHOT_COL[kind]); t.scale.set(elemCol ? 1.8 : 1, 1, elemCol ? 1.7 : 1);
+            const pw = 1 + 0.06 * ((skl.atk || 0) + (skl.atkS || 0));
+            t.scale.z *= 1 + 0.12 * (skl.atkS || 0) + 0.08 * (skl.pierce || 0);
+            const sg = shotGlows.get(i); sg.position.set(s.x, 1.3, s.z); sg.material.color.set(elemCol || (skl.atkS ? '#e6f4ff' : '#fff1a8')); sg.scale.setScalar((elemCol ? 2.8 : 1.4) * pw * (0.9 + 0.2 * Math.sin(time * 40 + i)));
+            if (!s._seen) { s._seen = 1; flare(s.x, 1.3, s.z, elemCol || '#fff1a8', (elemCol ? 3.4 : 2) * pw, 0.12);
+              if (skl.spdS || skl.spd) for (let k = 0; k < 3; k++) emit(sparks, s.x, 1.3, s.z, rnd(-2, 2), rnd(0.5, 2), rnd(-2, 2), 0.2, '#ffe27a'); }
+            if (skl.atkS && Math.random() < dt * 30) emit(sparks, s.x, 1.3, s.z, 0, 0.2, 0, 0.22, '#eaf6ff');
+            if (skl.fire && Math.random() < dt * 60) emit(flamesC, s.x + rnd(-0.2, 0.2), 1.3, s.z + rnd(-0.2, 0.2), rnd(-0.5, 0.5), rnd(0.5, 1.5), rnd(-0.5, 0.5), rnd(0.15, 0.3), Math.random() < 0.5 ? '#ff6a10' : '#ffc23a', -2);
+            if (elemCol && Math.random() < dt * 40) emit(sparks, s.x + rnd(-0.15, 0.15), 1.3 + rnd(-0.15, 0.15), s.z + rnd(-0.15, 0.15), rnd(-0.6, 0.6), elemUp, rnd(-0.6, 0.6), rnd(0.2, 0.4), Math.random() < 0.5 ? elemCol : elemCol2, elemUp < 0 ? 3 : -2);
+          });
+          shots.hide(S.shots.length); trails.hide(S.shots.length); shotGlows.hide(S.shots.length);
+          S.foes.forEach((s, i) => {
+            const ax = s.kind === 'axe', m = foes.get(i);
+            m.geometry = ax ? foeAxe : s.kind === 'bolt' ? foeBolt : foeOrb; m.material = ax ? bmat('#ffffff', { vertexColors: true }) : bmat(s.kind === 'bolt' ? '#ff5050' : '#e07bff');
+            m.position.set(s.x, 1.2, s.z); m.rotation.y = s.a + (ax ? time * 12 : 0);
+            const gl = glows.get(i); gl.position.set(s.x, 1.2, s.z); gl.material.color.set(ax ? '#ff7a30' : s.kind === 'bolt' ? '#ff3030' : '#c040ff'); gl.scale.setScalar(ax ? 1.4 : s.kind === 'bolt' ? 1.6 : 2.4);
+          });
+          foes.hide(S.foes.length); glows.hide(S.foes.length);
+          S.drops.forEach((d, i) => { const m = coins.get(i); m.position.set(d.x, 0.5 + Math.abs(Math.sin(time * 5 + i)) * 0.4, d.z); m.rotation.set(Math.PI / 2, time * 3, 0); });
+          coins.hide(S.drops.length);
+          // Telegraphs and effects.
+          let li = 0, ri = 0, fi = 0, si = 0;
+          for (const f of S.fx) {
+            if (f.kind === 'line') { const m = lines.get(li++); m.position.set(f.x, 0.08, f.z); m.rotation.y = f.a + Math.PI; m.scale.set(f.wide ? 3.5 : f.thin ? 0.35 : 1.6, 1, f.len); m.material.opacity = 0.25 + 0.25 * Math.sin(time * 20); }
+            else if (f.kind === 'meteor') {
+              const t = 1 - f.life / f.max, m = rings.get(ri++); m.position.set(f.x, 0.1, f.z); m.scale.set(f.r, 1, f.r); m.material.opacity = 0.4 + 0.4 * Math.sin(time * 25);
+              meteorS.visible = true; meteorS.position.set(f.x - 8 * (1 - t), 1 + 22 * (1 - t), f.z - 6 * (1 - t)); meteorS.scale.setScalar(3.5 + 2 * t);
+              if (Math.random() < 0.9) emit(flamesC, meteorS.position.x, meteorS.position.y, meteorS.position.z, rnd(-1, 1), rnd(1, 3), rnd(-1, 1), rnd(0.3, 0.5), Math.random() < 0.5 ? '#ff5a10' : '#ffd23f');
+              continue;
+            }
+            else if (f.kind === 'rain') {
+              const m = rings.get(ri++); m.position.set(f.x, 0.1, f.z); m.scale.set(f.r, 1, f.r); m.material.opacity = 0.5;
+              for (let k = 0; k < 3; k++) emit(sparks, f.x + rnd(-f.r, f.r), 12, f.z + rnd(-f.r, f.r), 0, -40, 0, 0.3, '#fff1a8');
+              continue;
+            }
+            else if (f.kind === 'nova') { const m = shocks2.get(si++), t = 1 - f.life / 0.5, e = 1 - Math.pow(1 - t, 2); m.position.set(f.x, 0.12, f.z); m.scale.set(f.r * e * 1.15, 1, f.r * e * 1.15); m.material.opacity = 1 - t; continue; }
+            else if (f.kind === 'zap') {
+              if (!f._lit) { f._lit = 1; fx('zapfx', f.x, f.z, { x2: f.x2, z2: f.z2 }); }
+              const m = lines.get(li++), dx = f.x2 - f.x, dz = f.z2 - f.z; m.position.set(f.x, 1.3 + rnd(-0.15, 0.15), f.z); m.rotation.y = Math.atan2(dx, dz) + Math.PI + rnd(-0.06, 0.06); m.scale.set(rnd(0.15, 0.45), 1, Math.hypot(dx, dz)); m.material.opacity = 0.9;
+              for (let k = 0; k < 3; k++) { const t = Math.random(); emit(sparks, f.x + dx * t + rnd(-0.3, 0.3), 1.3 + rnd(-0.3, 0.3), f.z + dz * t + rnd(-0.3, 0.3), rnd(-2, 2), rnd(-1, 2), rnd(-2, 2), 0.18, Math.random() < 0.5 ? '#c77dff' : '#ffffff'); }
+            }
+            else {
+              const m = rings.get(ri++); m.position.set(f.x, 0.1, f.z); m.material.color.set(f.c || '#ff3b3b');
+              if (f.kind === 'boom') { const r = f.r * (1.05 - f.life / 0.4 * 0.45); m.scale.set(r, 1, r); m.material.opacity = 0.9; continue; }
+              // Telegraph: the outline pulses and a disc fills up from the centre until the strike lands.
+              m.scale.set(f.r, 1, f.r); m.material.opacity = 0.55 + 0.3 * Math.sin(time * 18);
+              if (!f.max) f.max = f.life;
+              const fl = fills.get(fi++), k = Math.max(0.05, 1 - f.life / f.max); fl.position.set(f.x, 0.09, f.z); fl.scale.set(f.r * k, 1, f.r * k); fl.material.color.set(f.c || '#ff3b3b'); fl.material.opacity = 0.18 + 0.2 * k;
+            }
+          }
+          lines.hide(li); rings.hide(ri); fills.hide(fi); shocks2.hide(si); if (!S.fx.some(f => f.kind === 'meteor')) meteorS.visible = false;
+          // Fire circle.
+          const n = 2 * (S.skills.orbit || 0);
+          for (let k = 0; k < n; k++) { const a = S.orbT + k / n * Math.PI * 2, m = orbs.get(k); m.position.set(S.p.x + Math.sin(a) * 2.6, 1.3, S.p.z + Math.cos(a) * 2.6); m.children[1].scale.setScalar(2.2 + 0.4 * Math.sin(time * 22 + k)); if (Math.random() < dt * 30) emit(flamesC, m.position.x, 1.3, m.position.z, -Math.cos(a) * 1.5, rnd(0.5, 1.5), Math.sin(a) * 1.5, rnd(0.2, 0.35), Math.random() < 0.5 ? '#ff5a10' : '#ffb03a', -1.5); if (Math.random() < dt * 25) emit(sparks, m.position.x, 1.3, m.position.z, rnd(-0.5, 0.5), rnd(1, 2.5), rnd(-0.5, 0.5), rnd(0.25, 0.45), Math.random() < 0.5 ? '#ff7a1a' : '#ffd23f', -2); }
+          orbs.hide(n);
+          // Ground zones, frost aura, spinning blades.
+          const zs = S.zones || [];
+          zs.forEach((zn, i) => {
+            const m = zoneM.get(i), t = zn.life / zn.max, fire = zn.kind === 'fire';
+            m.position.set(zn.x, 0.11 + i * 0.0005, zn.z); m.scale.setScalar(zn.r * 1.5 * (0.9 + 0.1 * Math.sin(time * 6 + i))); m.rotation.y = i * 1.7 + time * (fire ? 0.6 : 0.25);
+            if (!fire && Math.random() < dt * 5) emit(sparks, zn.x + rnd(-0.6, 0.6) * zn.r, 0.2, zn.z + rnd(-0.6, 0.6) * zn.r, 0, rnd(0.6, 1.4), 0, 0.5, '#b6ff5a', 0.5); // poison bubbles
+            m.material.color.set(fire ? '#ff5a10' : '#5dff3a'); m.material.opacity = Math.min(1, t * 2) * 0.9;
+            if (Math.random() < dt * (fire ? 10 : 6)) emit(fire ? flamesC : puffs, zn.x + rnd(-0.6, 0.6) * zn.r, 0.3, zn.z + rnd(-0.6, 0.6) * zn.r, 0, fire ? rnd(1.5, 3) : 0.6, 0, fire ? rnd(0.3, 0.5) : 0.9, fire ? (Math.random() < 0.5 ? '#ff6a10' : '#ffc23a') : '#3ad12a', fire ? -2 : 0);
+          });
+          zoneM.hide(zs.length);
+          auraM.visible = auraF.visible = !!S.auraR;
+          if (S.auraR) {
+            auraM.position.set(S.p.x, 0.13, S.p.z); auraM.scale.setScalar(S.auraR); auraM.rotation.y = time * 0.6;
+            auraF.position.set(S.p.x, 0.12, S.p.z); auraF.scale.setScalar(S.auraR * 1.3); auraF.material.opacity = 0.3 + 0.08 * Math.sin(time * 3);
+            if (Math.random() < dt * 25) { const a = Math.random() * Math.PI * 2, r = S.auraR * Math.sqrt(Math.random()); emit(sparks, S.p.x + Math.sin(a) * r, 0.3, S.p.z + Math.cos(a) * r, 0, rnd(0.8, 2), 0, rnd(0.5, 0.9), Math.random() < 0.5 ? '#bff4ff' : '#ffffff'); }
+          }
+          iceG.visible = !!S.auraR;
+          if (S.auraR) iceG.children.forEach((c, k) => { const a = time * 1.3 + k / 6 * Math.PI * 2, r = S.auraR * 0.82; c.position.set(S.p.x + Math.sin(a) * r, 0.9 + 0.25 * Math.sin(time * 3 + k), S.p.z + Math.cos(a) * r); c.rotation.y = time * 3 + k; });
+          const nb = (S.skills && S.skills.blades) ? 1 + S.skills.blades : 0;
+          for (let k = 0; k < nb; k++) {
+            const a = (S.bladeT || 0) + k / nb * Math.PI * 2, m = bladeM.get(k);
+            m.position.set(S.p.x + Math.sin(a) * 3.6, 1.3, S.p.z + Math.cos(a) * 3.6); m.rotation.y = a + time * 12;
+            if (Math.random() < dt * 20) emit(sparks, m.position.x, 1.3, m.position.z, 0, 0.5, 0, 0.25, '#dfefff');
+          }
+          bladeM.hide(nb);
+          // Door, spikes, angel.
+          const open = S.door && !(S.angel && !S.angel.used);
+          if (door) door.visible = !S.door;
+          if (portal) { portal.visible = !!S.door; portal.material.opacity = 0.65 + 0.3 * Math.sin(time * 4); }
+          if (doorArrow) { doorArrow.visible = open; doorArrow.position.y = 6 + Math.sin(time * 4) * 0.6; doorArrow.rotation.y = time * 2; }
+          chevrons.forEach((c, k) => { c.visible = open; c.material.opacity = 0.25 + 0.75 * Math.max(0, Math.sin(time * 5 + k * 0.9)); });
+          if (open && Math.random() < dt * 12) fx('door', 0, -RH + 1);
+          S.spikes.forEach((sp, i) => {
+            const t = spikesM[i]; if (!t) return;
+            const ph = sp.t % 3, warn = !sp.up && ph > 2.3, x = sp.x, z = sp.z;
+            if (t.glow) t.glow.material.opacity = sp.up ? 0.9 : warn ? 0.35 + 0.35 * Math.sin(time * 30) : 0.08;
+            if (t.kind === 'spikes') t.rise.position.y = sp.up ? 0 : -1.6;
+            else if (t.kind === 'ice') { t.rise.position.y += ((sp.up ? 0 : -2.6) - t.rise.position.y) * Math.min(1, dt * 18); if (sp.up && Math.random() < dt * 12) emit(sparks, x + rnd(-1.5, 1.5), rnd(0.5, 2), z + rnd(-1.5, 1.5), 0, 0.5, 0, 0.5, '#e8fbff'); }
+            else if (t.kind === 'geyser') { t.rise.visible = sp.up; t.rise.scale.set(1, sp.up ? 0.9 + 0.15 * Math.sin(time * 25) : 0.01, 1); if (sp.up) for (let k = 0; k < 3; k++) emit(sparks, x + rnd(-1, 1), rnd(3, 5), z + rnd(-1, 1), rnd(-3, 3), rnd(1, 4), rnd(-3, 3), rnd(0.4, 0.7), Math.random() < 0.5 ? '#bfeaff' : '#ffffff', 14); }
+            else if (t.kind === 'fire' && sp.up) { for (let k = 0; k < 7; k++) emit(flamesC, x + rnd(-0.7, 0.7), 0.3, z + rnd(-0.7, 0.7), rnd(-0.8, 0.8), rnd(8, 14), rnd(-0.8, 0.8), rnd(0.35, 0.6), Math.random() < 0.6 ? '#ff5a10' : '#ffd23f', -2); }
+            else if (t.kind === 'fire' && warn && Math.random() < dt * 20) emit(sparks, x + rnd(-1, 1), 0.3, z + rnd(-1, 1), 0, rnd(1, 3), 0, 0.4, '#ff8a2a');
+          });
+          if (angelG) {
+            angelG.g.visible = !S.angel.used; angelG.g.position.y = 0.6 + Math.sin(time * 2) * 0.3;
+            angelG.wings.forEach((w, k) => { w.rotation.y = (k ? -1 : 1) * (0.5 + Math.sin(time * 3) * 0.3); });
+            pose(angelG.g.userData.m, 6, 6, 0);
+            if (!S.angel.used && Math.random() < dt * 8) fx('angel', S.angel.x, S.angel.z);
+          }
+          if (S.chest && !chestG) chestG = buildChest(S.chest);
+          if (chestG) animChest(S.chest, dt);
+          camRoom(S, dt);
+          if (R.artCam) { camera.position.set(-8.5, 8, 15.5); camera.lookAt(0, 0, -1.5); }
+          renderer.render(scene, camera);
+        },
+      };
+      let uid = 0;
+      return R;
+    },
+  };
+})();

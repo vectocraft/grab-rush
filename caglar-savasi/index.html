@@ -1,0 +1,113 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<meta name="theme-color" content="#141338">
+<title>Age Wars</title>
+<link rel="stylesheet" href="../ortak/ui.css">
+<style>
+  .war-panel { position: fixed; left: 0; right: 0; bottom: 0; z-index: 6; padding: 8px 10px calc(env(safe-area-inset-bottom) + 10px);
+    background: linear-gradient(180deg, rgba(34,31,92,.95), #1b1850); border-top: 3px solid rgba(255,255,255,.15); display: flex; flex-direction: column; gap: 8px; }
+  .war-top { display: flex; align-items: center; gap: 8px; }
+  .xp { flex: 1; position: relative; height: 22px; border-radius: 99px; background: rgba(0,0,0,.4); border: 2px solid rgba(255,255,255,.2); overflow: hidden; }
+  .xp > i { position: absolute; inset: 0 auto 0 0; background: linear-gradient(90deg, #8b5cf6, #22d3ee); }
+  .xp > span { position: relative; display: block; text-align: center; font-size: 12px; font-weight: 800; line-height: 18px; text-shadow: 0 1px 0 #000; }
+  .war-row { display: flex; gap: 8px; justify-content: space-between; }
+  .ubtn { flex: 1; border: 0; border-radius: 16px; padding: 4px 2px 6px; cursor: pointer; background: linear-gradient(180deg, #4b46a8, #2a2575); box-shadow: 0 4px 0 #15124a, inset 0 2px 0 rgba(255,255,255,.2); display: flex; flex-direction: column; align-items: center; }
+  .ubtn .ico { font-size: 28px; line-height: 1.2; height: 40px; display: grid; place-items: center; }
+  .ubtn .ico .uimg { width: 44px; height: 44px; object-fit: contain; filter: drop-shadow(0 2px 2px rgba(0,0,0,.4)); }
+  .ubtn .nm { font-size: 9.5px; font-weight: 700; color: #dfe3ff; line-height: 1.05; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .queue .uimg { width: 22px; height: 22px; vertical-align: middle; }
+  .dimg { width: 40px; height: 40px; object-fit: contain; flex: 0 0 auto; }
+  /* Defense sheet: an empty slot stacks its title over two full-width build buttons; nothing wraps word by word. */
+  .upg.dempty { flex-direction: column; align-items: stretch; gap: 8px; } .upg.dempty > div:first-child { text-align: left; }
+  .dbtns { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  .dbtn { display: flex; align-items: center; justify-content: center; gap: 6px; text-align: left; min-width: 0; padding: 6px 8px !important; }
+  .dbtn span { display: flex; flex-direction: column; min-width: 0; font-size: 13px; line-height: 1.15; } .dbtn b { font-size: 12px; white-space: normal; overflow-wrap: anywhere; }
+  .dbtn .dc { display: flex; align-items: center; gap: 3px; font-style: normal; font-size: 14px; }
+  .drow { display: flex; align-items: center; gap: 8px; min-width: 0; text-align: left; } .drow > div { min-width: 0; } .drow b { display: block; } .drow small { display: block; white-space: normal; line-height: 1.2; }
+  .drow .dimg, .dbtn .dimg { width: 40px; height: 40px; flex: none; }
+  .ubtn .cost { font-size: 12px; font-weight: 800; color: #ffe066; }
+  .ubtn:active { transform: translateY(3px); box-shadow: 0 1px 0 #15124a; }
+  .ubtn:disabled { filter: grayscale(.7) brightness(.7); }
+  .queue { min-height: 16px; font-size: 13px; text-align: center; letter-spacing: 2px; }
+  /* Clash look (matches the menus): wooden command bar, glossy blue unit cards with ink outline and a gold cost tag. */
+  .war-panel { background: linear-gradient(180deg, var(--wood) 0, var(--wood2) 100%); border-top: 4px solid var(--o); box-shadow: inset 0 3px 0 rgba(255,214,140,.35), 0 -6px 18px rgba(0,0,0,.35); }
+  .war-panel::before { content: ''; position: absolute; left: 0; right: 0; top: 0; height: 100%; pointer-events: none; opacity: .16;
+    background: repeating-linear-gradient(180deg, transparent 0 9px, rgba(0,0,0,.6) 9px 10px); }
+  .war-panel > * { position: relative; }
+  .xp { height: 24px; background: #2a1a0c; border: 3px solid var(--o); box-shadow: inset 0 2px 0 rgba(0,0,0,.4); }
+  .xp > i { background: linear-gradient(180deg, #7ef0ff, #22b5e0 55%, #138fbf); box-shadow: inset 0 2px 0 rgba(255,255,255,.4); }
+  .xp > span { font-family: var(--disp); font-weight: 400; line-height: 18px; text-shadow: var(--ol); }
+  .war-top .pill { border: 3px solid var(--o); background: linear-gradient(180deg, #3a2a1a, #1f140a); font-family: var(--disp); text-shadow: var(--ol); }
+  .ubtn { border: 3px solid var(--o); border-radius: 14px; padding: 4px 2px 0; overflow: hidden;
+    background: radial-gradient(circle at 50% 30%, #8fd0ff 0, #3b8cff 45%, #1d55c4 100%); box-shadow: var(--plate-hi), 0 4px 0 var(--o); }
+  .ubtn .nm { font-family: var(--disp); font-weight: 400; font-size: 10.5px; color: #fff; text-shadow: var(--ol); margin-top: 1px; }
+  .ubtn .cost { align-self: stretch; margin-top: 3px; padding: 2px 0 3px; font-family: var(--disp); font-weight: 400; font-size: 13px; color: #fff; text-shadow: var(--ol);
+    background: linear-gradient(180deg, #ffd84a, #f29b0c); border-top: 3px solid var(--o); }
+  .ubtn:active { transform: translateY(3px); box-shadow: var(--plate-hi), 0 1px 0 var(--o); }
+  #tur { background: radial-gradient(circle at 50% 30%, #c9f59a 0, #4cc23a 45%, #23801c 100%); }
+  /* In-battle rewarded boosts: two round buttons floating at the left edge, above the command bar. */
+  .boosts { position: fixed; left: 10px; z-index: 6; display: flex; flex-direction: column; gap: 22px; pointer-events: none; }
+  .boosts .ab { pointer-events: auto; }
+  .boosts .ab .ad { position: absolute; top: -4px; right: -6px; z-index: 2; font: 800 9px/1 system-ui, sans-serif; color: #fff; background: #7c3aed; border: 2px solid var(--o); border-radius: 6px; padding: 2px 3px; }
+  .boosts .ab .lbl { left: calc(100% + 6px); bottom: auto; top: 50%; transform: translateY(-50%); font-size: 13px; }
+  .boosts .ab.on .lbl { color: #ffd23f; }
+  .boosts .ab.on { animation: ready .6s ease-in-out infinite; filter: drop-shadow(0 0 10px #ffb020); } .boosts .ab.on .ad { display: none; }
+  .boosts .ab.in { animation: boostIn .5s cubic-bezier(.3,1.6,.5,1) both, ready 1.2s 0.5s ease-in-out infinite; }
+  @keyframes boostIn { from { transform: scale(0); } to { transform: scale(1); } }
+</style>
+</head>
+<body>
+<canvas id="c3d"></canvas>
+<canvas id="c"></canvas>
+
+<div class="hud">
+  <div class="hud-row">
+    <button class="icon-btn" id="pauseBtn">❚❚</button>
+    <button class="icon-btn" id="soundBtn">🔊</button>
+    <div class="lvl-chip" id="lvl">Level 1</div>
+    <div class="coin-pill"><i class="coin"></i><b id="coins">0</b></div>
+  </div>
+</div>
+
+<div class="war-panel hidden" id="panel">
+  <div class="war-top">
+    <span class="pill">💰 <b id="gold">0</b></span>
+    <div class="xp"><i id="xpfill" style="width:0"></i><span id="xptxt">XP</span></div>
+    <button class="btn gold small hidden" id="evo" data-l="🌟 EVOLVE|🌟 ÇAĞ ATLA">🌟 EVOLVE</button>
+  </div>
+  <div class="queue" id="queue"></div>
+  <div class="war-row">
+    <button class="ubtn" id="u0"><span class="ico">🪨</span><span class="nm"></span><span class="cost">15</span></button>
+    <button class="ubtn" id="u1"><span class="ico">🪃</span><span class="nm"></span><span class="cost">25</span></button>
+    <button class="ubtn" id="u2"><span class="ico">🦖</span><span class="nm"></span><span class="cost">100</span></button>
+    <button class="ubtn" id="tur"><span class="ico">🗼</span><span class="cost">150</span></button>
+    <button class="ab small" id="spc" style="--c:#ff8a1f;--cl:#ffd08a;--cd:#b45309;flex:0 0 auto;align-self:center"><span class="ico">☄️</span><span class="cost" data-l="SPECIAL|ÖZEL">SPECIAL</span><span class="lbl" id="spcName"></span></button>
+  </div>
+</div>
+
+<div class="boosts hidden" id="boosts">
+  <button class="ab small hidden" id="bReinf" style="--c:#22c55e;--cl:#bbf7d0;--cd:#15803d"><span class="ad">AD</span><span class="ico">🚩</span><span class="lbl" id="bReinfL"></span></button>
+  <button class="ab small hidden" id="bPower" style="--c:#f59e0b;--cl:#fde68a;--cd:#b45309"><span class="ad">AD</span><span class="ico">⚡</span><span class="lbl" id="bPowerL"></span></button>
+</div>
+<div class="overlay hidden" id="ov"></div>
+
+<script src="../ortak/economy.js"></script>
+<script src="../ortak/gicons-data.js"></script>
+<script src="../ortak/gicons.js"></script>
+<script src="../ortak/cloud.js"></script>
+<script src="../ortak/iap.js"></script>
+<script src="../ortak/sound.js"></script>
+<script src="../ortak/ads.js"></script>
+<script src="../ortak/kit.js"></script>
+<script src="../ortak/fx.js"></script>
+<script src="../ortak/lib/three.min.js"></script>
+<script src="kaykit-cag.js"></script>
+<script src="kaykit-units.js"></script>
+<script src="cag-ext.js"></script>
+<script src="render3d.js"></script>
+<script src="game.js"></script>
+</body>
+</html>

@@ -1,0 +1,26 @@
+<!doctype html>
+<!-- Bakes the Crowd Surge squad skin portraits (node scripts/make-skin-art.js suru-skin-art.html): one soldier per skin
+     of Suru3D.GEAR, 24 turntable frames of 200x250 → ortak/img/skins/suru-<skin>.webp. -->
+<html><head><meta charset="utf-8"><style>body{margin:0;background:#333}canvas{display:block}</style></head>
+<body>
+<canvas id="c" width="200" height="250" style="width:200px;height:250px"></canvas>
+<script src="../ortak/lib/three.min.js"></script>
+<script src="../suru-seli/render3d.js"></script>
+<script>
+  const FRAMES = 24, W = 200, H = 250;
+  const R = Suru3D.init(document.getElementById('c'), { alpha: true });
+  window.bake = async () => {
+    const out = {}, strip = document.createElement('canvas'); strip.width = W * FRAMES; strip.height = H;
+    const g = strip.getContext('2d');
+    for (const k in Suru3D.GEAR) {
+      g.clearRect(0, 0, strip.width, strip.height);
+      for (let f = 0; f < FRAMES; f++) {
+        const img = new Image(); await new Promise(r => { img.onload = r; img.src = R.portrait(k, 0.55 + f / FRAMES * Math.PI * 2); });
+        g.drawImage(img, f * W, 0);
+      }
+      out['suru-' + k] = strip.toDataURL('image/png');
+    }
+    return out;
+  };
+</script>
+</body></html>

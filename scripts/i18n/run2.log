@@ -1,0 +1,26 @@
+es: 11 to translate
+  es 11/11 (18 s)
+es: verify 146 suspicious
+es: 1257/1258 → ortak/i18n/es.js
+pt: 13 to translate
+  pt 13/13 (35 s)
+pt: verify 78 suspicious
+pt: 1258/1258 → ortak/i18n/pt.js
+de: 8 to translate
+  de 8/8 (19 s)
+de: verify 169 suspicious
+de: 1257/1258 → ortak/i18n/de.js
+fr: 7 to translate
+  skip: "<div class=\"upg\"><div><b>🟩 Reward lane</b><small>Only rewards come down here. Pass a gate to gain soldiers; shooting a gate raises its number — even minus gates turn positive!</small></div></div>"
+  fr 7/7 (24 s)
+fr: verify 82 suspicious
+fr: 1256/1258 → ortak/i18n/fr.js
+it: 7 to translate
+  skip: "Heal 30% HP now"
+  it 7/7 (20 s)
+it: verify 101 suspicious
+it: 1254/1258 → ortak/i18n/it.js
+id: 9 to translate
+  id 9/9 (23 s)
+id: verify 162 suspicious
+id: 1257/1258 → ortak/i18n/id.js

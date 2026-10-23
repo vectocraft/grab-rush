@@ -1,0 +1,10 @@
+<!doctype html><meta charset="utf-8"><body><pre id="o" style="position:fixed;z-index:9;left:0;top:0;right:0;background:#fff;font:14px monospace;white-space:pre-wrap;margin:0"></pre><iframe id="f" style="width:393px;height:852px;border:0"></iframe>
+<script>
+// Temporary error harness: loads ?p=<page>, runs ?js=<code>, prints every error after ?ms.
+const q = new URLSearchParams(location.search), f = document.getElementById('f'), o = document.getElementById('o'), errs = [];
+f.src = q.get('p');
+f.onload = () => { const w = f.contentWindow; w.addEventListener('error', e => errs.push('ERR ' + e.message + ' @' + (e.filename || '').split('/').pop() + ':' + e.lineno));
+  const ce = w.console.error; w.console.error = (...a) => { errs.push('CE ' + a.join(' ')); ce.apply(w.console, a); };
+  setTimeout(() => { try { w.eval(q.get('js') || ''); } catch (e) { errs.push('EVAL ' + e); } }, 1500); };
+setTimeout(() => { o.textContent = 'DONE ' + errs.length + '\n' + errs.slice(0, 20).join('\n') + '\n' + (q.get('out') ? f.contentWindow.eval(q.get('out')) : ''); }, +(q.get('ms') || 20000));
+</script>

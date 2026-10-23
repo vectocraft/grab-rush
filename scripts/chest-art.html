@@ -1,0 +1,91 @@
+<!doctype html>
+<meta charset="utf-8">
+<!-- 3D chest art, built procedurally with Three.js and rendered once into sprite sheets (scripts/make-chests.js):
+     7 frames per chest, the lid opening from shut to wide open. ?k=gold|royal; the result lands in #out as a PNG
+     data URL. Toon-ish lighting and a dark ink outline (inverted hull) to match the games' Clash style. -->
+<body style="margin:0;background:transparent">
+<pre id="out"></pre>
+<script src="../ortak/lib/three.min.js"></script>
+<script>
+(() => {
+  const T = THREE, K = new URLSearchParams(location.search).get('k') || 'gold', S = 384, ANG = [0, 8, 22, 42, 66, 90, 106];
+  const royal = K === 'royal';
+  const renderer = new T.WebGLRenderer({ antialias: true, alpha: true, preserveDrawingBuffer: true });
+  renderer.setSize(S, S); renderer.setPixelRatio(1); renderer.setClearColor(0, 0);
+  if ('outputColorSpace' in renderer) renderer.outputColorSpace = T.SRGBColorSpace;
+  const scene = new T.Scene(), cam = new T.PerspectiveCamera(30, 1, 0.1, 100);
+  cam.position.set(4.2, 3.6, 6.2); cam.lookAt(0, 0.95, 0);
+  scene.add(new T.HemisphereLight('#fff6e8', '#4a3a5a', 1.25));
+  const key = new T.DirectionalLight('#ffffff', 2.2); key.position.set(4, 7, 5); scene.add(key);
+  const rim = new T.DirectionalLight(royal ? '#c77dff' : '#ffd27a', 1.4); rim.position.set(-5, 3, -4); scene.add(rim);
+  const inner = new T.PointLight(royal ? '#d48bff' : '#ffcf5a', 0, 6); inner.position.set(0, 1.35, 0); scene.add(inner);
+
+  // Textures: wood planks for the gold chest, a dark marbled stone for the obsidian one.
+  const tex = draw => { const c = document.createElement('canvas'); c.width = c.height = 256; draw(c.getContext('2d')); const t = new T.CanvasTexture(c); if ('colorSpace' in t) t.colorSpace = T.SRGBColorSpace; return t; };
+  const wood = tex(g => {
+    g.fillStyle = '#a5602a'; g.fillRect(0, 0, 256, 256);
+    for (let y = 0; y < 256; y += 51) { g.fillStyle = y % 102 ? '#9a5624' : '#ad672e'; g.fillRect(0, y, 256, 49); g.fillStyle = '#5e2f0d'; g.fillRect(0, y + 49, 256, 2); }
+    g.globalAlpha = 0.25; g.strokeStyle = '#5e2f0d'; for (let k = 0; k < 40; k++) { const y = Math.random() * 256; g.beginPath(); g.moveTo(0, y); g.bezierCurveTo(80, y + 4, 170, y - 4, 256, y + 2); g.stroke(); }
+  });
+  const stone = tex(g => {
+    g.fillStyle = '#26163c'; g.fillRect(0, 0, 256, 256);
+    for (let k = 0; k < 18; k++) { g.strokeStyle = 'rgba(170,110,255,' + (0.1 + Math.random() * 0.25).toFixed(2) + ')'; g.lineWidth = 1 + Math.random() * 2; g.beginPath(); let x = Math.random() * 256, y = Math.random() * 256; g.moveTo(x, y); for (let s = 0; s < 6; s++) { x += (Math.random() - 0.5) * 70; y += (Math.random() - 0.5) * 70; g.lineTo(x, y); } g.stroke(); }
+  });
+  const phong = (o) => new T.MeshPhongMaterial(o);
+  const body = royal ? phong({ map: stone, color: '#ffffff', shininess: 90, specular: '#6a4a9a' }) : phong({ map: wood, color: '#ffffff', shininess: 14, specular: '#3a2210' });
+  const gold = phong({ color: '#ffc433', emissive: '#5a3200', shininess: 110, specular: '#fff3c0' });
+  const goldDark = phong({ color: '#c98a12', emissive: '#3a1e00', shininess: 80, specular: '#ffe7a0' });
+  const gem = phong({ color: royal ? '#b04dff' : '#ff3048', emissive: royal ? '#7a1fd0' : '#8a0012', shininess: 140, specular: '#ffffff' });
+  const glowM = new T.MeshBasicMaterial({ color: royal ? '#e2b0ff' : '#fff0a0', transparent: true, opacity: 0 });
+  const ink = new T.MeshBasicMaterial({ color: '#1c120a', side: T.BackSide });
+
+  const root = new T.Group(); scene.add(root);
+  // Every visible part gets a black inverted-hull outline.
+  function add(parent, geo, mat, x, y, z, rx, ry, rz) {
+    const m = new T.Mesh(geo, mat); m.position.set(x || 0, y || 0, z || 0); m.rotation.set(rx || 0, ry || 0, rz || 0); parent.add(m);
+    const o = new T.Mesh(geo, ink); o.scale.setScalar(1.045); m.add(o); return m;
+  }
+  const W = 2.2, D = 1.45, H = 1.15, R = D / 2;
+  // Body.
+  add(root, new T.BoxGeometry(W, H, D), body, 0, H / 2, 0);
+  // Inside glow (seen when the lid opens).
+  const glow = new T.Mesh(new T.PlaneGeometry(W * 0.9, D * 0.85).rotateX(-Math.PI / 2), glowM); glow.position.y = H - 0.02; root.add(glow);
+  // Corner posts, base trim, bands.
+  for (const sx of [-1, 1]) for (const sz of [-1, 1]) add(root, new T.BoxGeometry(0.2, H + 0.04, 0.2), goldDark, sx * (W / 2 - 0.06), H / 2, sz * (D / 2 - 0.06));
+  add(root, new T.BoxGeometry(W + 0.1, 0.14, D + 0.1), goldDark, 0, 0.07, 0);
+  for (const sx of [-0.62, 0.62]) add(root, new T.BoxGeometry(0.2, H + 0.02, D + 0.05), gold, sx, H / 2, 0);
+  // Studs along the front.
+  for (let k = -3; k <= 3; k++) if (Math.abs(k) !== 2) add(root, new T.SphereGeometry(0.045, 8, 6), gold, k * 0.31, 0.24, D / 2 + 0.03);
+  // Lid: half cylinder hinged at the back top edge.
+  const hinge = new T.Group(); hinge.position.set(0, H, -D / 2); root.add(hinge);
+  const lid = new T.Group(); lid.position.set(0, 0, D / 2); hinge.add(lid);
+  // A half cylinder along x, dome up: three's cylinder runs along y and its theta 0..PI is the x >= 0 half, so a
+  // quarter turn about z lays it down with that half on top.
+  const dome = (r, len) => new T.CylinderGeometry(r, r, len, 28, 1, false, 0, Math.PI).rotateZ(Math.PI / 2);
+  add(lid, dome(R, W), body);
+  add(lid, new T.BoxGeometry(W, 0.08, D), body, 0, 0.0, 0);
+  for (const sx of [-0.62, 0.62]) add(lid, dome(R + 0.04, 0.2), gold, sx);
+  for (const sx of [-1, 1]) add(lid, dome(R + 0.03, 0.14), goldDark, sx * (W / 2 - 0.05));
+  // Lock plate with a gem, hanging from the lid's front.
+  const lock = add(lid, new T.BoxGeometry(0.46, 0.5, 0.12), gold, 0, -0.12, D / 2 + 0.05);
+  add(lock, new T.OctahedronGeometry(0.13, 0), gem, 0, 0.03, 0.08, 0, Math.PI / 4, 0);
+  add(lock, new T.BoxGeometry(0.06, 0.12, 0.04), new T.MeshBasicMaterial({ color: '#2a1600' }), 0, -0.15, 0.06);
+  // The obsidian chest wears crystals on its lid and a gem crown; the gold one a big top gem.
+  if (royal) {
+    for (const [x, s, r] of [[-0.35, 0.55, -0.25], [0.05, 0.75, 0.1], [0.42, 0.5, 0.3]]) add(lid, new T.OctahedronGeometry(0.2, 0).scale(1, 2.2, 1), gem, x, R + 0.12 + s * 0.15, 0, 0, 0, r);
+  } else add(lid, new T.OctahedronGeometry(0.16, 0), gem, 0, R + 0.06, 0, 0, Math.PI / 4, 0);
+  root.rotation.y = -0.18;
+
+  // Render the 7 frames side by side into one sheet.
+  const sheet = document.createElement('canvas'); sheet.width = S * ANG.length; sheet.height = S;
+  const sg = sheet.getContext('2d');
+  ANG.forEach((a, i) => {
+    hinge.rotation.x = -a * Math.PI / 180;
+    const k = a / 106; inner.intensity = 14 * k; glowM.opacity = 0.9 * k;
+    renderer.render(scene, cam);
+    sg.drawImage(renderer.domElement, i * S, 0);
+  });
+  document.getElementById('out').textContent = sheet.toDataURL('image/png');
+})();
+</script>
+</body>

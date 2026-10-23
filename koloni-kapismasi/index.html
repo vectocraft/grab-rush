@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<meta name="theme-color" content="#141338">
+<title>Colony Clash</title>
+<link rel="stylesheet" href="../ortak/ui.css">
+<style>
+  /* Boss card on the level screen: big boss icon, name and its skill. */
+  .bosscard { display: flex; align-items: center; gap: 10px; text-align: left; padding: 8px 10px; border-radius: 14px; background: linear-gradient(180deg, #4a1d6e, #2a0f45); border: 3px solid var(--o); box-shadow: 0 3px 0 var(--o); }
+  .bosscard .bi { font-size: 38px; line-height: 1; flex: none; }
+  .bosscard b { display: block; font-family: var(--disp); font-weight: 400; font-size: 17px; color: #ffd23f; text-shadow: var(--ol); }
+  .bosscard small { display: block; font-size: 12px; font-weight: 700; color: #f3e8ff; line-height: 1.25; margin-top: 2px; }
+</style>
+</head>
+<body>
+<canvas id="c3d"></canvas>
+<canvas id="c"></canvas>
+
+<div class="hud">
+  <div class="hud-row">
+    <button class="icon-btn" id="pauseBtn">❚❚</button>
+    <button class="icon-btn" id="soundBtn">🔊</button>
+    <div class="lvl-chip" id="lvl">Level 1</div>
+    <div class="coin-pill"><i class="coin"></i><b id="coins">0</b></div>
+  </div>
+  <div class="share" id="share"></div>
+</div>
+
+<div class="abilities hidden" id="abil">
+  <div class="energy-lbl" id="energy">⚡ 0</div>
+  <button class="ab" id="abFreeze" style="--c:#38bdf8;--cl:#bae6fd;--cd:#0369a1"><span class="ico">❄️</span><span class="cost">⚡50</span><span class="lbl" id="lbFreeze">Freeze</span></button>
+  <button class="ab" id="abSpeed" style="--c:#fbbf24;--cl:#fde68a;--cd:#b45309"><span class="ico">💨</span><span class="cost">⚡40</span><span class="lbl" id="lbSpeed">Rush</span></button>
+  <button class="ab small" id="abAd" style="--c:#3be07a;--p:100"><span class="ico">📺</span><span class="cost">+10</span><span class="lbl" id="lbAd">Reinforce</span></button>
+</div>
+
+<div class="overlay hidden" id="ov"></div>
+
+<script src="../ortak/economy.js"></script>
+<script src="../ortak/gicons-data.js"></script>
+<script src="../ortak/gicons.js"></script>
+<script src="../ortak/cloud.js"></script>
+<script src="../ortak/iap.js"></script>
+<script src="../ortak/sound.js"></script>
+<script src="../ortak/ads.js"></script>
+<script src="../ortak/themes.js"></script>
+<script src="../ortak/kit.js"></script>
+<script src="../ortak/fx.js"></script>
+<script src="../ortak/lib/three.min.js"></script>
+<script src="render3d.js"></script>
+<script src="game.js"></script>
+</body>
+</html>

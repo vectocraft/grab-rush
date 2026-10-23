@@ -1,0 +1,7 @@
+test
+
+# Reklam modu - yayin-derle.cmd bu dosyanin ilk satirina bakar.
+#   test   = KAPALI TEST: Google test reklamlari (test kullanicilari gercek reklama tiklayamaz).
+#   gercek = URETIM ONAYLANDI: gercek reklamlar.
+# Kullanici 'uretime gectik / onay geldi' demeden 'gercek' yapma.
+# (22 Eki 2026: AdMob hesabi kendi reklamina tiklama yuzunden 29 gun askiya alindi.)

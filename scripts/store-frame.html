@@ -1,0 +1,37 @@
+<!doctype html>
+<html><head><meta charset="utf-8">
+<!-- Store screenshot frame (1080×1920): caption on top, game screen below. Driven by scripts/store-shots.mjs via ?img=&t=&s=&g= -->
+<style>
+@font-face { font-family: 'Lilita'; src: url('../ortak/fonts/LilitaOne-latin.woff2') format('woff2'); }
+@font-face { font-family: 'Lilita'; src: url('../ortak/fonts/LilitaOne-latin-ext.woff2') format('woff2'); unicode-range: U+0100-011D, U+0120-012F, U+0132-015D, U+0160-024F, U+1E00-1EFF; }
+@font-face { font-family: 'Baloo'; src: url('../ortak/fonts/Baloo2.ttf') format('truetype'); font-weight: 400 800; }
+html, body { margin: 0; width: 1080px; height: 1920px; overflow: hidden; }
+body { --a: #3b82f6; --b: #1e3a8a; background: radial-gradient(120% 70% at 50% 0%, var(--a) 0%, var(--b) 70%, #0b1230 100%); font-family: 'Baloo', sans-serif; color: #fff; position: relative; }
+body::before { content: ''; position: absolute; inset: 0; background: repeating-conic-gradient(from 0deg at 50% 8%, rgba(255,255,255,.07) 0 6deg, transparent 6deg 18deg); }
+.cap { position: absolute; top: 70px; left: 50px; right: 50px; text-align: center; }
+h1 { margin: 0; font-family: 'Lilita', sans-serif; font-weight: 400; font-size: 92px; line-height: 1.02; letter-spacing: 1px; text-transform: uppercase;
+  color: #fff; -webkit-text-stroke: 3px rgba(0,0,0,.35); paint-order: stroke fill; text-shadow: 0 7px 0 rgba(0,0,0,.35), 0 0 40px rgba(255,255,255,.25); }
+h1 em { font-style: normal; color: #ffd23f; }
+p { margin: 18px 0 0; font-size: 40px; font-weight: 800; opacity: .92; text-shadow: 0 3px 0 rgba(0,0,0,.35); }
+.ph { position: absolute; left: 50%; top: 380px; width: 860px; transform: translateX(-50%); border: 12px solid #10152b; border-bottom: 0; border-radius: 64px 64px 0 0;
+  overflow: hidden; height: 1600px; box-shadow: 0 -10px 60px rgba(0,0,0,.45), 0 0 0 4px rgba(255,255,255,.18); background: #000; }
+.ph img { display: block; width: 100%; }
+</style></head>
+<body>
+<div class="cap"><h1 id="t"></h1><p id="s"></p></div>
+<div class="ph"><img id="img"></div>
+<script>
+  const q = new URLSearchParams(location.search);
+  const COL = { hub: ['#7c5cff', '#2a1a78'], arrow: ['#ff7a3d', '#7a1f12'], colony: ['#36b3ff', '#123c7a'], crowd: ['#3ddc84', '#0f5a3a'], hole: ['#ffb12a', '#7a3a08'], mine: ['#f5c542', '#6b4a0a'], ages: ['#ef4b5a', '#5a1030'] };
+  const c = COL[q.get('g')] || COL.hub;
+  document.body.style.setProperty('--a', c[0]); document.body.style.setProperty('--b', c[1]);
+  // "*word*" in a caption is highlighted in gold.
+  const esc = s => s.replace(/[&<>]/g, m => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[m]));
+  document.getElementById('t').innerHTML = esc(q.get('t') || '').replace(/\*([^*]+)\*/g, '<em>$1</em>');
+  document.getElementById('s').textContent = q.get('s') || '';
+  document.getElementById('img').src = q.get('img');
+  // Long translations: shrink the headline until it fits in two lines.
+  const h = document.getElementById('t'); let fs = 92;
+  document.fonts.ready.then(() => { while (h.offsetHeight > 200 && fs > 52) { fs -= 4; h.style.fontSize = fs + 'px'; } });
+</script>
+</body></html>
