@@ -24,6 +24,8 @@ Kurallar `CLAUDE.md` içindeki "Play kapalı test → üretim kuralları" bölü
 | G-11 | 23.10.2026 | WhatsApp | Arrow Legends: yaratıklar kapak görselindeki gibi daha güzel olsun (test kullanıcısı geri bildirimi; görev maddesi C10) | Düzeltildi (`gorev-v2` dalında; henüz sürüm derlenmedi) — ayrıntı: `docs/GORSEL-RAPOR-V2.md` |
 | G-12 | 23.10.2026 | WhatsApp | Arrow Legends: her yetenek kendi efektini göstersin (Hızlı Eller, iyileşme, buz oku vb.) (test kullanıcısı geri bildirimi; görev maddesi C-ek) | Düzeltildi (`gorev-v2` dalında; henüz sürüm derlenmedi) — ayrıntı: `docs/GORSEL-RAPOR-V2.md` |
 | G-13 | 23.10.2026 | iç test | Arrow Legends: kahraman vurulunca çıkması gereken kıvılcım ve kamera sarsıntısı kodu yanlışlıkla bir yorum satırının içinde kalmış, hiç çalışmıyordu | Düzeltildi (`gorev-v2` dalında; henüz sürüm derlenmedi) |
+| G-14 | 24.10.2026 | WhatsApp | V2 telefonda denendi: efektler beğenildi, optimizasyon çok daha iyi; grafik ve efekt çalışması devam etsin, Grab Rush daha ilgi çekici olsun (Sürü Seli + Arrow Legends + hub + diğer oyunlar; görev `docs/GOREV-V3.md`) | Düzeltildi (`gorev-v3` dalında; henüz sürüm derlenmedi) — ayrıntı: `docs/GORSEL-RAPOR-V3.md` |
+| G-15 | 24.10.2026 | WhatsApp | Sürü Seli: takviye helikopteri oyuncuya (kameraya) dönük duruyor; burnu düşmana, yolun ilerisine baksın, kapıdaki nişancı düşmana ateş etsin | Düzeltildi (`gorev-v3` dalında; henüz sürüm derlenmedi) — ekran: `docs/screens-v3/suru-heli-*` |
 
 ## Sürümler
 

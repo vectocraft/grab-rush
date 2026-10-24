@@ -1005,7 +1005,9 @@
         const alt = h.st === 'in' ? 95 + Math.max(0, 1.3 - h.t) * 160 : h.st === 'out' ? 95 + h.t * h.t * 90 : 95 + Math.sin(time * 2.2) * 3;
         const hx = h.x - CX, hz = h.y - CZ;
         T0.g.position.set(hx, alt, hz);
-        T0.g.rotation.set(h.st === 'in' ? 0.25 : h.st === 'out' ? -0.15 : 0.04, 0, Math.sin(time * 1.3) * 0.05);
+        // Nose up the road toward the enemy (the model is built nose +z, so it turns half way round); it dips its nose
+        // flying in and pulling away.
+        T0.g.rotation.set(h.st === 'in' ? -0.25 : h.st === 'out' ? -0.18 : -0.04, Math.PI, Math.sin(time * 1.3) * 0.05);
         T0.rotor.rotation.y += dt * 32; T0.tailRotor.rotation.x += dt * 40;
         T0.nav[0].visible = T0.nav[1].visible = Math.sin(time * 6) > -0.3; T0.nav[2].visible = (time * 1.4) % 1 < 0.12;
         T0.crewM.color.set(info.skin);
@@ -1017,9 +1019,15 @@
         }
         if (h.st === 'hover') {
           // Two ropes from the door to the road; a soldier slides down each, over and over while troops drop.
-          for (const r of T0.ropes) { r.m.visible = true; r.m.position.set(hx + 20, alt - 8, hz + r.dz); r.m.scale.set(1, alt - 8, 1); }
-          if (h.left > 0) T0.sliders.forEach((sl, i) => { const u = (h.t * 2.6 + i * 0.5) % 1; sl.g.visible = true; sl.g.position.set(hx + 20, (alt - 18) * (1 - u) + 2, hz + sl.dz); });
-          T0.gunner.rotation.y = Math.sin(time * 3) * 0.3;
+          // (The door is on the left side now that the nose points up the road.)
+          for (const r of T0.ropes) { r.m.visible = true; r.m.position.set(hx - 20, alt - 8, hz + r.dz); r.m.scale.set(1, alt - 8, 1); }
+          if (h.left > 0) T0.sliders.forEach((sl, i) => { const u = (h.t * 2.6 + i * 0.5) % 1; sl.g.visible = true; sl.g.position.set(hx - 20, (alt - 18) * (1 - u) + 2, hz + sl.dz); });
+          // The door gunner swings his minigun onto the enemy he is shooting at (same pick as the game: the closest
+          // foe up the road, else the boss).
+          let tg = null; for (const e of S.enemies) if (!e.dead && e.y > 80 && (!tg || e.y > tg.y)) tg = e;
+          const C2 = S.castle, tx = tg ? tg.x : C2 && !C2.dead ? C2.x : null, ty = tg ? tg.y : C2 && !C2.dead ? C2.y : null;
+          const want = tx == null ? Math.sin(time * 3) * 0.3 : Math.atan2(tx - h.x + 22, ty - h.y) - Math.PI;
+          T0.gunner.rotation.y += (Math.atan2(Math.sin(want - T0.gunner.rotation.y), Math.cos(want - T0.gunner.rotation.y))) * Math.min(1, dt * 10);
         }
       }
 
@@ -1669,6 +1677,8 @@
           if (camKick) camera.position.add(v3.set((Math.random() - 0.5) * camKick, (Math.random() - 0.5) * camKick, 0));
           done(zones, nZone); done(zoneRims, nmkZ);
           support(S, info, time, dt);
+          // Test hook: a close-up camera on the support helicopter (screenshots that check which way it faces).
+          if (R.heliCam && transport && transport.g.visible) { const p = transport.g.position, c = R.heliCam; camera.position.set(p.x + c[0], p.y + c[1], p.z + c[2]); camera.lookAt(p.x, p.y - 10, p.z - 30); }
           renderer.render(scene, camera);
         },
       };

@@ -645,7 +645,7 @@
           let tg = null;
           for (const e of S.enemies) if (!e.dead && e.y > 80 && (!tg || e.y > tg.y)) tg = e;
           const C2 = S.castle, tx = tg ? tg.x : C2 && !C2.dead ? C2.x : null, ty = tg ? tg.y : C2 && !C2.dead ? C2.y : null;
-          if (tx != null) { const bx = h.x + 22, by = h.y - 10, sp = 760, ux = (tx - bx) / Math.max(40, by - ty); S.bullets.push({ x: bx, y: by, vx: clamp(ux, -1.2, 1.2) * sp, dmg: 1.2 + S.dl * 0.06, speed: sp, kind: 'bullet', hits: 0, heli: true, y0: by }); }
+          if (tx != null) { const bx = h.x - 22, by = h.y - 10, sp = 760, ux = (tx - bx) / Math.max(40, by - ty); S.bullets.push({ x: bx, y: by, vx: clamp(ux, -1.2, 1.2) * sp, dmg: 1.2 + S.dl * 0.06, speed: sp, kind: 'bullet', hits: 0, heli: true, y0: by }); }
         }
         if (h.t > 5.2) { h.st = 'out'; h.t = 0; }
       } else { h.y -= (120 + h.t * 380) * dt; if (h.y < -400) h.dead = true; }
