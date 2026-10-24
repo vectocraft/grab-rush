@@ -13,5 +13,8 @@
   window.Themes = {
     list: THEMES,
     forLevel(lv) { return THEMES[Math.floor((Math.max(1, lv) - 1) / 10) % THEMES.length]; },
+    // A game's own theme list on the same 10-level cadence (Crowd Surge's 3D worlds); entries fall back to the shared
+    // theme for any field they leave out (2D colours), so both renderers keep working.
+    pick(list, lv) { const i = Math.floor((Math.max(1, lv) - 1) / 10); return Object.assign({}, THEMES[i % THEMES.length], list[i % list.length]); },
   };
 })();

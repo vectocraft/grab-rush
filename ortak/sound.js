@@ -7,7 +7,7 @@
 
   let ac = null, master = null, sfxGain = null, musGain = null, noiseBuf = null;
   const last = {};
-  const THROTTLE = { cash: 3, shoot: 0.05, gate: 0.04, thud: 0.06, send: 0.05, pop: 0.05, hit: 0.08, boom: 0.07, mortar: 0.15 };
+  const THROTTLE = { cash: 3, shoot: 0.05, gate: 0.04, thud: 0.06, send: 0.05, pop: 0.05, hit: 0.08, boom: 0.07, mortar: 0.15, clash: 0.09, star: 0.05 };
 
   function ensure() {
     if (ac) return ac;
@@ -75,6 +75,12 @@
     mortar() { tone(140, 0.12, 'sine', 0.35, 60); noise(0.1, 0.25, 400); },
     plane() { tone(95, 1.6, 'sawtooth', 0.12, 150); tone(190, 1.6, 'square', 0.04, 260); },
     boss() { tone(110, 0.8, 'sawtooth', 0.28, 55); noise(0.6, 0.3, 120); },
+    // V3 juice: x2 gate burst, army clash thud, slow-motion whoosh, star chime, level-up fanfare.
+    mega() { noise(0.3, 0.35, 700); [523, 784, 1047, 1568].forEach((f, i) => tone(f, 0.16, 'square', 0.12, f * 1.5, i * 0.05)); },
+    clash() { noise(0.12, 0.3, 160 + Math.random() * 80); tone(120, 0.1, 'square', 0.1, 70); },
+    slow() { tone(320, 0.7, 'sine', 0.22, 70); noise(0.5, 0.18, 260); },
+    star() { tone(1319, 0.12, 'triangle', 0.18, 1760); tone(2093, 0.25, 'sine', 0.1, null, 0.08); },
+    levelup() { [523, 659, 784, 1047, 1319].forEach((f, i) => tone(f, 0.18, 'triangle', 0.22, null, i * 0.07)); noise(0.25, 0.12, 2000); },
   };
 
   // ---------- Music: 4-bar chord loop, bass + arpeggio ----------
@@ -95,7 +101,7 @@
   }
 
   // Short vibrations on the big moments (works with the sound muted; off in the hub settings: Save.data.vib === false).
-  const BUZZ = { boss: [40, 60, 50], win: [30, 50, 70], lose: 160 }, buzzAt = {}; // hits vibrate from the games (UI.vibrate)
+  const BUZZ = { boss: [40, 60, 50], win: [30, 50, 70], lose: 160, mega: [20, 30, 40], levelup: [30, 40, 60] }, buzzAt = {}; // hits vibrate from the games (UI.vibrate)
   const buzz = name => {
     const pat = BUZZ[name]; if (!pat || Save.data.vib === false || !navigator.vibrate) return;
     const now = performance.now(); if (now - (buzzAt[name] || 0) < 140) return; buzzAt[name] = now;

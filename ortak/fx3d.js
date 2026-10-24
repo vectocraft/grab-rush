@@ -487,6 +487,38 @@
         },
         // One slow falling snowflake / spore / leaf (trails of ice and poison arrows).
         flake(x, y, z, color, size, life) { E(x, y, z, rnd(-0.6, 0.6) * U, rnd(-1.4, -0.4) * U, rnd(-0.6, 0.6) * U, life || 0.7, (size || 0.32) * U, 0.05 * U, color, 0.95, 0, 0.6, 0, 1); },
+        // ---- V3 presets (reward moments, clashes, ambient weather; same pooled parts) ----
+        // Gold rain: glinting coins tossed up from a point that tumble down (star cells blink as they spin).
+        coins(x, y, z, n, spread) {
+          const S = (spread || 3) * U;
+          for (let k = 0; k < (n || 24); k++) { const b = Math.random() * TAU, v = rnd(0.3, 1) * S; E(x + rnd(-0.5, 0.5) * U, y, z + rnd(-0.5, 0.5) * U, Math.sin(b) * v, rnd(7, 15) * U, Math.cos(b) * v, rnd(0.9, 1.5), 0.55 * U, 0.4 * U, k % 3 ? '#ffd23f' : '#fff3b0', 1, 22 * U, 0.6, 0, k % 2 ? 1 : 2); }
+        },
+        // Confetti: many-coloured flakes bursting up and fluttering down (win, level up, big gate).
+        confetti(x, y, z, n, spread) {
+          const S = (spread || 4) * U, C = ['#ff4d6d', '#ffd23f', '#3be07a', '#4dabff', '#c77dff', '#ffffff'];
+          for (let k = 0; k < (n || 30); k++) { const b = Math.random() * TAU, v = rnd(0.3, 1) * S; E(x, y, z, Math.sin(b) * v, rnd(6, 13) * U, Math.cos(b) * v, rnd(1.1, 1.9), 0.42 * U, 0.3 * U, C[k % C.length], 1, 9 * U, 1.6, 0, 2); }
+        },
+        // Dust cloud: low brown-grey smoke blobs rolling out along the floor (armies colliding, heavy landings).
+        dust(x, z, r, n, color) {
+          const R = (r || 2) * U;
+          for (let k = 0; k < (n || 6); k++) { const b = Math.random() * TAU, v = rnd(0.4, 1) * R; E(x + Math.sin(b) * R * 0.3, floor + 0.5 * U, z + Math.cos(b) * R * 0.3, Math.sin(b) * v, rnd(0.6, 1.6) * U, Math.cos(b) * v, rnd(0.7, 1.2), R * 0.5, R * 1.3, color || '#9a8a78', 0.32, 0, 1.6, 0, 3); }
+        },
+        // Ambient weather inside a box around (cx, cz): call every frame; rate = particles per second.
+        // kind: snow | ash | embers | sand | motes | fireflies | leaves.
+        weather(kind, cx, cz, w, d, h, rate, dt, scale) {
+          const U = fx.unit * (scale || 1);
+          let n = rate * dt; const cnt = Math.floor(n) + (Math.random() < n % 1 ? 1 : 0);
+          for (let k = 0; k < cnt; k++) {
+            const x = cx + rnd(-0.5, 0.5) * w, z = cz + rnd(-0.5, 0.5) * d, hy = h * rnd(0.25, 1);
+            if (kind === 'snow') E(x, hy, z, rnd(-0.6, 0.6) * U, rnd(-4, -2.5) * U, rnd(-0.3, 0.6) * U, rnd(3.5, 5), 0.5 * U, 0.4 * U, '#f4fbff', 0.9, 0, 0, 0, 0);
+            else if (kind === 'ash') E(x, hy, z, rnd(-0.8, 0.8) * U, rnd(-2.2, -1.2) * U, rnd(-0.4, 0.4) * U, rnd(4, 6), 0.45 * U, 0.35 * U, Math.random() < 0.8 ? '#7a6e6a' : '#ff8a3a', 0.7, 0, 0, 0, 0);
+            else if (kind === 'embers') E(x, floor + rnd(0, 2) * U, z, rnd(-0.8, 0.8) * U, rnd(3, 7) * U, rnd(-0.8, 0.8) * U, rnd(1.6, 2.6), 0.42 * U, 0.1 * U, Math.random() < 0.5 ? '#ff7a1a' : '#ffd23f', 1, 0, 0.4, 0, 2);
+            else if (kind === 'sand') E(x, rnd(0.5, 6) * U, z, rnd(10, 16) * U, rnd(-0.3, 0.3) * U, rnd(-1, 1) * U, rnd(0.8, 1.4), 0.3 * U, 0.2 * U, '#f1d39a', 0.55, 0, 0, 0.05, 2);
+            else if (kind === 'motes') E(x, rnd(0.5, 10) * U, z, 0, rnd(1, 3) * U, 0, rnd(1.6, 2.6), 0.4 * U, 0.15 * U, Math.random() < 0.5 ? '#ff3df0' : '#3df9ff', 1, 0, 0.3, 0, 2);
+            else if (kind === 'fireflies') E(x, rnd(1, 6) * U, z, rnd(-1, 1) * U, rnd(-0.4, 0.6) * U, rnd(-1, 1) * U, rnd(1.6, 2.8), 0.5 * U, 0.2 * U, Math.random() < 0.6 ? '#d8ff6a' : '#fff1a0', 1, 0, 0.2, 0, 0);
+            else if (kind === 'leaves') E(x, hy, z, rnd(-1.5, 1.5) * U, rnd(-2.4, -1.2) * U, rnd(-1, 1) * U, rnd(3, 4.5), 0.45 * U, 0.4 * U, Math.random() < 0.5 ? '#e0a33a' : '#c2562a', 0.95, 0, 0, 0, 2);
+          }
+        },
         clear() { glow.clear(); },
         setBudget(n) { BUDGET = n; },
         // Draw every part once, fully transparent, somewhere on screen: drivers (and SwiftShader) build the pipeline
