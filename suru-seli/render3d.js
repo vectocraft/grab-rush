@@ -1174,7 +1174,7 @@
           done(seps, ns);
           // Scenery.
           let nt = 0, ncw = 0, nro = 0, npo = 0, npi = 0, nbu = 0, nfl = 0, nbk = 0, nnb = 0, nca = 0, ncar = 0;
-          const PR = env.props, city = PR === 'city';
+          const PR = env.props, city = PR === 'city', off = R.v3off || {}; // v3off: test hook for bench experiments
           for (const d of decos) {
             const y = ((D - d.s - FAR_Y) % DECO_P + DECO_P) % DECO_P + FAR_Y, z = y - CZ;
             // V3 worlds swap the roadside props: city blocks for trees, cacti and mesas in the desert, bare trunks and
@@ -1221,7 +1221,7 @@
           done(blocks, nbk); done(neonBars, nnb); done(cacti, nca); done(cactusArms, ncar);
           // Ambient weather of the world (snow, ash and embers, blowing sand, neon motes, fireflies): a few GPU
           // particles per second over the visible road; skipped when the phone is struggling.
-          if (!lowFx && env.wx) {
+          if (!lowFx && !off.wx && env.wx) {
             fx.weather(env.wx[0], 0, -350, 1100, 1500, 420, env.wx[1], dt, 3);
             if (env.wx2) fx.weather(env.wx2[0], 0, -350, 1100, 1500, 420, env.wx2[1], dt, 3);
           }
@@ -1420,7 +1420,7 @@
             put(B.legL, k, x - 1.7 * s, 6.6 * s, z, s, s, s, sw, 0, 0);
             put(B.legR, k, x + 1.7 * s, 6.6 * s, z, s, s, s, -sw, 0, 0);
             put(B.torso, k, x, (9.6 + bob) * s, z, s, s, s, 0.12 * dir - lean, 0, roll, bodyC);
-            if (det) {
+            if (det && !off.gear && !lowFx) {
               const fy = 6.6 - 5.4 * Math.cos(sw), fz = 5.4 * Math.sin(sw);
               put(boots, nbt++, x - 1.7 * s, fy * s, z - fz * s + 0.6 * s, s, s, s, sw, 0, 0); put(boots, nbt++, x + 1.7 * s, (6.6 - 5.4 * Math.cos(-sw)) * s, z + fz * s + 0.6 * s, s, s, s, -sw, 0, 0);
               put(pads, npd++, x - 3.3 * s, (12.9 + bob) * s, z, s, s * 0.8, s, 0, 0, 0.35 + roll, padC); put(pads, npd++, x + 3.3 * s, (12.9 + bob) * s, z, s, s * 0.8, s, 0, 0, -0.35 + roll, padC);
@@ -1451,9 +1451,9 @@
           done(boots, nbt); done(pads, npd);
           // Army ground glow (team colour, grows with the crowd) and the standard bearers of a big army.
           { const rows = Math.ceil(Math.min(q.n, 60) / Math.max(1, Math.min(6, q.n))), depth = rows * 12.5 * s / 2.3 + 30, wid = Math.min(6, q.n) * 14 + 50;
-            armyGlow.visible = q.n > 0; armyGlow.material.color.set(info.skin); armyGlow.material.opacity = 0.32 + Math.min(0.3, q.n / 300) + 0.06 * Math.sin(time * 4);
+            armyGlow.visible = q.n > 0 && !off.glow && !lowFx; armyGlow.material.color.set(info.skin); armyGlow.material.opacity = 0.32 + Math.min(0.3, q.n / 300) + 0.06 * Math.sin(time * 4);
             armyGlow.position.set(q.x - CX, 1.1, SQUAD_Y - CZ - runOff + depth * 0.45); armyGlow.scale.set(wid * 1.5, 1, depth * 1.6);
-            const big = q.n >= 25 && !lowFx;
+            const big = q.n >= 25 && !lowFx && !off.flags;
             bearers.forEach((b, k) => {
               b.g.visible = big; if (!big) return;
               const sx = k ? 1 : -1, bz = SQUAD_Y - CZ - runOff + Math.min(rows, 10) * 12.5 * 0.85 + 6;
@@ -1461,7 +1461,7 @@
               b.cloth.material.color.set(info.skin); b.cloth.rotation.y = (k ? Math.PI : 0) + Math.sin(time * 5 + k * 2) * 0.35; b.cloth.rotation.z = Math.sin(time * 7 + k) * 0.06;
             });
             // Dust kicked up behind a marching army (more soldiers, more dust).
-            if (moving && !lowFx && Math.random() < dt * Math.min(4, 1 + q.n / 30)) puff(q.x - CX + rnd(-wid / 2, wid / 2), 2, SQUAD_Y - CZ - runOff + depth, 3.5 + Math.min(4, q.n / 30), 0.7, DUST_C, 4);
+            if (moving && !lowFx && !off.dust && Math.random() < dt * Math.min(4, 1 + q.n / 30)) puff(q.x - CX + rnd(-wid / 2, wid / 2), 2, SQUAD_Y - CZ - runOff + depth, 3.5 + Math.min(4, q.n / 30), 0.7, DUST_C, 4);
           }
           for (const k in lite) done(lite[k], nl);
           done(gear.beret, gk.hat === 'beret' ? ng : 0); done(gear.plume, gk.hat === 'plume' ? ng : 0); done(gear.spike, gk.hat === 'spike' ? ng : 0);

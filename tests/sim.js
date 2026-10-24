@@ -491,7 +491,7 @@ async function playLevel(game) {
   }
   STATS.levels[game]++;
   if (result === 'timeout') { STATS.timeouts.push(game + ' L' + lv + ' (gün ' + day + ')'); if (page.sb.__M() === 'play') tap('pauseBtn'); click('menu'); return 'timeout'; }
-  await advance(1000); // suru shows its win panel after 700 ms
+  await advance(3000); // suru shows its win panel after 2.4 s (V3 victory sequence)
   const bs = buttons().map(b => b.act);
   const fs_ = STATS.failStreak[game];
   if (bs.includes('claim')) {

@@ -102,7 +102,7 @@ function serve() {
   for (const [name, sc] of Object.entries(SCENES)) {
     if (only && !only.split(',').includes(name)) continue;
     let o = await open(sc, { width: 540, height: 960 }, 2);
-    await o.page.screenshot({ path: path.join(ROOT, outDir, name + '-' + tag + '.png') });
+    await o.page.screenshot({ path: path.join(path.resolve(ROOT, outDir), name + '-' + tag + '.png') });
     const errs = o.errs; await o.ctx.close();
     o = await open(sc, { width: 393, height: 852 }, 1);
     const cdp = await o.ctx.newCDPSession(o.page);
