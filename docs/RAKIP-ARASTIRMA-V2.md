@@ -116,3 +116,40 @@ Ayrıntı: `docs/GORSEL-RAPOR-V2.md`.
 - Çıkarım 6: tutarlı element dili + düşman üstünde 🔥 ❄️ ⚡ ☠️ durum ikonları.
 - Çıkarım 8: daha doygun, rim ışıklı, kalın çizgili yaratıklar; düşman mermilerinde parlak iz.
 - Uygulanmadı: 5 (mermi desenleri oyun mantığı), 7 (yetenek kartı nadirlik çerçevesi — ama her yetenek kendi seçim efektini oynatıyor).
+
+---
+
+## V3 eki — hub uygulamaları ve "juicy" oyun hissi (24 Ekim 2026)
+
+Kısa tarama; amaç V3'te (`docs/GOREV-V3.md`) uygulanacak görsel/efekt maddelerini seçmekti.
+
+### "Juice" (oyun hissi) kaynakları
+- **"Juice it or lose it" (Jonasson & Purho, GDC 2012):** sıradan bir Breakout'a adım adım flaş, titreşim, parçacık ve ses ekleyerek oyunu "anında eğlenceli" yapıyorlar. Ders: her etkileşimin bir görsel + ses + hareket cevabı olmalı. ([wayline](https://www.wayline.io/learn/game-feel/1), [eastondev](https://eastondev.com/blog/en/posts/dev/20260521-game-feedback-feel/))
+- **Temel araçlar:** ekran sarsıntısı, hit-stop (ağır vuruşta 50–100 ms donma), parçacık, tween. "Juice baharattır, yemek değil": küçük dozlarda, büyük sarsıntı rahatsız eder. ([wayline](https://www.wayline.io/learn/game-feel/1))
+- **Vuruş geri bildirimi:** isabet noktasında parçacık, isabette ıskadan daha güçlü sarsıntı; vuran ve vurulan kısa süre duraklar. ([Mega Cat juice guide](https://megacatstudios.com/blogs/game-development/mega-cat-developer-juice-guide-v1-0-08-23-17))
+- **Erişilebilirlik:** iyi araç setleri "azaltılmış hareket", flaş, sarsıntı ve titreşim anahtarlarına uyuyor. ([Juicee / Godot](https://store.godotengine.org/asset/kelpekk/juicee/))
+
+### Kapı koşusu (gate runner) türü
+- Doğru kapı ordunu büyütür, yanlışı küçültür; oyunun özü bu sayı değişimini **hissettirmek**: hareketli sayaçlar, renkli ve canlı seviyeler, "tatmin edici ilerleme". ([CrazyGames Count Masters](https://www.crazygames.fr/jeu/count-masters-stickman-games), [Fab crowd runner paketi](https://www.fab.com/listings/35954016-79e4-4fec-a51c-ba5c45582643?lang=fr))
+- Türün uzun ömrü iyi düşünülmüş geri bildirim döngüsünden geliyor. ([PocketGamer.biz](https://www.pocketgamer.biz/the-method-in-the-madness-how-to-make-a-successful-gate-runner-game))
+
+### Çoklu oyun hub uygulamaları
+- Samsung Gaming Hub: oyunlar tek ekranda, son oynanana göre sıralı, "toplu ve düzenli" bir alan. ([Samsung](https://www.samsung.com/uk/support/apps-services/know-more-about-gaming-hub/))
+- Küçük hub uygulamaları (itch.io): "tek dokunuşla başlat" kartları, birçok uygulama indirmeden oynama vaadi. ([Fun Hub Games](https://tycmedia.itch.io/fun-hub-games), [GamesHub](https://manxylo.itch.io/gameshub))
+- Bulunan kaynaklar kart animasyonu ya da hareket zamanlaması hakkında rehber vermiyor; bu yüzden hub tarafında yukarıdaki genel "juice" ilkelerini uyguladık (canlı kart, seçim geri bildirimi, ilk açılış anı).
+
+### V3 çıkarımları
+1. Her ödül anı **üç kanaldan** cevap versin: ışık (flaş/yıldız), hareket (pop/uçuş), ses (çınlama/fanfar).
+2. Sayı değişimleri (asker sayısı, altın, yıldız) **hareketli** olsun: pop, uçan sayılar, cüzdana uçan ikonlar.
+3. Ağır anlarda kısa **ağır çekim / hit-stop**; ama nadir ve kısa (bekleme süresi ile sınırlı).
+4. Sarsıntı küçük; ekran flaşı kısa; "azaltılmış hareket" tercihine uyulsun.
+5. Hub: kartlar canlı (parıltı, nefes alan görsel), seçimde büyüme + kıvılcım, ilk açılışta kısa ve atlanabilir bir giriş.
+6. Ortam çeşitliliği: uzun oturumda dünya değişsin (10 bölümde bir tema).
+
+### V3'te uygulananlar (V2'den kalanlar dahil)
+Ayrıntı: `docs/GORSEL-RAPOR-V3.md`.
+- V2 Crowd Surge çıkarım 4: boss can barı artık vuruşta **sallanıyor**; final "hazine" sahnesi eklendi.
+- V2 Arrow çıkarım 7: yetenek kartlarında nadirlik çerçevesi vardı; V3'te nadirlik **ışıması**, kart çevirme girişi, ışık süpürmesi.
+- V2 Arrow çıkarım 4 (kalan kısmı): boss değil ama **elit düşmanlar** taç + altın aura ile ayrıştı.
+- V3 çıkarımları 1–6: hepsi uygulandı (rapordaki tablolar). "Azaltılmış hareket" tercihinde hub animasyonları ve giriş kapanıyor.
+- Uygulanmadı: V2 Crowd Surge 2 ve 8 (gerekçe V2'deki gibi), V2 Arrow 5 (mermi desenleri oyun mantığı; denge korunsun diye).

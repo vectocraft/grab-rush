@@ -832,29 +832,26 @@ html:has(> body > .hub-bg) { background: #123a86; }
 .hub-bg .hbm { position: absolute; bottom: -12px; width: var(--s); height: var(--s); border-radius: 50%; background: radial-gradient(circle, #fff 0, #ffe7a0 40%, transparent 70%);
   opacity: 0; will-change: transform, opacity; animation: v3mote var(--t) linear var(--dl) infinite; }
 @keyframes v3mote { 0% { transform: translate(0, 0); opacity: 0; } 12% { opacity: .85; } 85% { opacity: .5; } 100% { transform: translate(var(--sx), -105vh); opacity: 0; } }
-.hub-bg .hbr { position: absolute; left: 50%; top: -30vh; width: 160vmax; height: 160vmax; margin-left: -80vmax; opacity: .16; will-change: transform;
+.hub-bg .hbr { position: absolute; left: 50%; top: -45vmax; width: 90vmax; height: 90vmax; margin-left: -45vmax; opacity: .16; will-change: transform;
   background: repeating-conic-gradient(from 0deg at 50% 50%, rgba(255,255,255,.6) 0 4deg, transparent 4deg 22deg);
-  -webkit-mask: radial-gradient(circle at 50% 50%, #000 0, transparent 45%); mask: radial-gradient(circle at 50% 50%, #000 0, transparent 45%); animation: fxspin 60s linear infinite; }
-.hub-bg .hbr.r2 { opacity: .1; animation-duration: 90s; animation-direction: reverse; }
+  -webkit-mask: radial-gradient(circle at 50% 50%, #000 0, transparent 45%); mask: radial-gradient(circle at 50% 50%, #000 0, transparent 45%); }
 /* Game cards: slide in one after another, a light sweep crosses each card every few seconds, the picture breathes,
    the accent colour glows on the frame; tapping a card zooms it up before the game opens. */
 .game-card { animation: v3card .5s cubic-bezier(.2, 1.4, .4, 1) backwards; }
 .game-card:nth-child(2) { animation-delay: .07s; } .game-card:nth-child(3) { animation-delay: .14s; } .game-card:nth-child(4) { animation-delay: .21s; }
 .game-card:nth-child(5) { animation-delay: .28s; } .game-card:nth-child(6) { animation-delay: .35s; }
 @keyframes v3card { from { opacity: 0; transform: translateY(26px) scale(.94); } }
-.game-card img { animation: v3breathe 9s ease-in-out infinite alternate; will-change: transform; }
-.game-card:nth-child(even) img { animation-delay: -4.5s; }
-@keyframes v3breathe { from { transform: scale(1); } to { transform: scale(1.07) translateY(-4px); } }
+/* The hub's JS gives one card at a time the "shine" class for ~1.4 s (a light sweep + an accent glow), so only
+   one small animation runs at any moment instead of a dozen infinite ones (they kept the phone's compositor busy). */
 .game-card::after { content: ''; position: absolute; top: -20%; bottom: -20%; left: 0; width: 34%; z-index: 2; pointer-events: none; transform: translateX(-160%) skewX(-18deg);
-  background: linear-gradient(90deg, transparent, rgba(255,255,255,.4), transparent); will-change: transform; animation: v3sweep 5.5s ease-in-out infinite; }
-.game-card:nth-child(2)::after { animation-delay: .9s; } .game-card:nth-child(3)::after { animation-delay: 1.8s; } .game-card:nth-child(4)::after { animation-delay: 2.7s; }
-.game-card:nth-child(5)::after { animation-delay: 3.6s; } .game-card:nth-child(6)::after { animation-delay: 4.5s; }
-@keyframes v3sweep { 0%, 62% { transform: translateX(-160%) skewX(-18deg); } 82%, 100% { transform: translateX(420%) skewX(-18deg); } }
+  background: linear-gradient(90deg, transparent, rgba(255,255,255,.4), transparent); }
+.game-card.shine::after { animation: v3sweep 1.1s ease-in-out both; }
+@keyframes v3sweep { from { transform: translateX(-160%) skewX(-18deg); } to { transform: translateX(420%) skewX(-18deg); } }
 .game-card::before { content: ''; position: absolute; inset: 0; z-index: 2; pointer-events: none; border-radius: inherit; box-shadow: inset 0 0 0 3px var(--acc), inset 0 0 24px color-mix(in srgb, var(--acc) 60%, transparent);
-  opacity: 0; will-change: opacity; animation: v3glow 2.4s ease-in-out infinite alternate; }
-@keyframes v3glow { to { opacity: .75; } }
+  opacity: 0; transition: opacity .5s; }
+.game-card.shine::before { opacity: .8; }
 .game-card.go { transform: scale(1.06) !important; z-index: 3; transition: transform .2s cubic-bezier(.2, 1.8, .4, 1); filter: brightness(1.15); }
-.game-card.go::before { opacity: 1; animation: none; }
+.game-card.go::before { opacity: 1; }
 /* First launch of the session: the emblem zooms out of a flash, the wordmark punches in, rays spin, then it lifts. */
 .v3intro { position: fixed; inset: 0; z-index: 80; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; overflow: hidden;
   background: radial-gradient(circle at 50% 45%, #3f8fff 0%, #1d56b8 40%, #0b2660 100%); animation: v3out .45s ease-in 1.75s forwards; }
@@ -868,4 +865,4 @@ html:has(> body > .hub-bg) { background: #123a86; }
 @keyframes v3punch2 { 0% { transform: scale(2.6); opacity: 0; } 100% { transform: none; opacity: 1; } }
 @keyframes v3flash { 0% { opacity: 1; } 100% { opacity: 0; } }
 @keyframes v3out { to { opacity: 0; transform: scale(1.08); visibility: hidden; } }
-@media (prefers-reduced-motion: reduce) { .hub-bg .hbm, .hub-bg .hbr, .game-card img, .game-card::after, .game-card::before { animation: none; } .v3intro { display: none; } }
+@media (prefers-reduced-motion: reduce) { .hub-bg .hbm, .game-card.shine::after { animation: none; } .v3intro { display: none; } }

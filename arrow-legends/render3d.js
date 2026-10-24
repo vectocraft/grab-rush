@@ -1024,7 +1024,7 @@
         { const lp = new T.MeshBasicMaterial(Object.assign({ map: glowTex, color: ch.light || '#ffd9a8', opacity: 0.32 }, add));
           const spots = [[-8, -RH + 2.2, 7], [8, -RH + 2.2, 7], [0, -RH + 2, 6]];
           for (const z of [-12, -4, 4, 12]) for (const sx of [-1, 1]) spots.push([sx * (RW - 1.6), z + 1.2, 6.5]);
-          for (const [x, z, r] of spots) { const m = new T.Mesh(new T.PlaneGeometry(r, r).rotateX(-Math.PI / 2), lp); m.position.set(x, 0.04, z); m.renderOrder = 1; room.add(m); } }
+          for (const [x, z, r] of spots) { const m = new T.Mesh(new T.PlaneGeometry(r, r).rotateX(-Math.PI / 2), lp); m.position.set(x, 0.04, z); m.renderOrder = 1; m.userData.pool3 = true; room.add(m); } }
         fogSheets = [];
         { const fc = new T.Color(ch.fog || '#1a1410').lerp(new T.Color('#c8d8e8'), 0.45);
           for (let k = 0; k < 2; k++) {
@@ -1585,7 +1585,10 @@
             ring(0, dz + 1, '#7dffae', 9, 0.6); flare(0, 2, dz, '#9effc8', 12, 0.5); screenFlash('rgba(125,255,174,.35)', 0.4);
           }
           if (portal && S.door) { doorT += dt; const u = Math.min(1, doorT / 0.55); portal.scale.set(1, u < 1 ? u * (1.25 - 0.25 * u) : 1, 1); }
-          if (!lowFxA && wx && F3 && dt > 0) for (const w of wx) F3.weather(w[0], camX, camZ - 2, 30, 34, 9, w[1], dt, 1);
+          const off = R.v3off || {}; // test hook: switch V3 extras off one by one (bench experiments)
+          if (off.mist) fogSheets.forEach(m => { m.visible = false; });
+          if (off.pools) room.children.forEach(m => { if (m.userData.pool3) m.visible = false; });
+          if (!lowFxA && !off.wx && wx && F3 && dt > 0) for (const w of wx) F3.weather(w[0], camX, camZ - 2, 30, 34, 9, w[1], dt, 1);
           fogSheets.forEach((m, k) => { m.material.map.offset.set((time * (0.006 + k * 0.004)) % 1, (time * (0.004 - k * 0.007)) % 1); });
           if (S.chest && !chestG) chestG = buildChest(S.chest);
           if (chestG) animChest(S.chest, dt);

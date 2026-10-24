@@ -572,12 +572,15 @@
   });
 
   // V3 living background: light motes drifting up and two slow rays (CSS transform/opacity animations only).
-  { const bg = document.querySelector('.hub-bg');
-    if (bg && !bg.children.length) {
-      let h = '<i class="hbr"></i><i class="hbr r2"></i>';
-      for (let i = 0; i < 16; i++) h += '<i class="hbm" style="left:' + (Math.random() * 100).toFixed(1) + '%;--s:' + (3 + Math.random() * 6).toFixed(1) + 'px;--t:' + (7 + Math.random() * 8).toFixed(1) + 's;--dl:' + (-Math.random() * 12).toFixed(1) + 's;--sx:' + (Math.random() * 80 - 40).toFixed(0) + 'px"></i>';
+  try { const bg = document.querySelector('.hub-bg');
+    if (bg && !(bg.children && bg.children.length)) {
+      let h = '<i class="hbr"></i>';
+      for (let i = 0; i < 6; i++) h += '<i class="hbm" style="left:' + (Math.random() * 100).toFixed(1) + '%;--s:' + (3 + Math.random() * 6).toFixed(1) + 'px;--t:' + (7 + Math.random() * 8).toFixed(1) + 's;--dl:' + (-Math.random() * 12).toFixed(1) + 's;--sx:' + (Math.random() * 80 - 40).toFixed(0) + 'px"></i>';
       bg.innerHTML = h;
-    } }
+    } } catch (e) { }
+  // V3 living cards: every 2.6 s the next card catches the light (one short sweep + glow at a time).
+  { let ci = 0; setInterval(() => { if (document.hidden || tab !== 'play') return; const cs = document.querySelectorAll('.game-card'); if (!cs.length) return;
+      cs.forEach(c => c.classList.remove('shine')); const c = cs[ci++ % cs.length]; void c.offsetWidth; c.classList.add('shine'); setTimeout(() => c.classList.remove('shine'), 1400); }, 2600); }
   // V3 first impression: once per app launch the emblem bursts in with the wordmark, then the hub slides up.
   try {
     if (!sessionStorage.getItem('v3intro') && !location.hash) {
