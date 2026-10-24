@@ -126,15 +126,42 @@
     g.fillStyle = grd; g.fillRect(0, 0, w, h);
     g.fillStyle = 'rgba(255,255,255,.25)'; for (let y = 0; y < h; y += 8) g.fillRect(0, y, w, 2);
   });
-  // Dusk sky: deep navy at the top, violet toward a glowing horizon, a sprinkle of stars (all baked, zero cost).
-  const skyTex = () => tex(256, 512, (g, w, h) => {
+  // Sky: a baked vertical gradient, a sprinkle of stars and faint cloud bands (zero cost at run time).
+  // Default = dusk (deep navy -> violet -> glowing pink horizon); each V3 world passes its own stops.
+  const skyTex = (stops, stars, cloud, extra) => tex(256, 512, (g, w, h) => {
     const grd = g.createLinearGradient(0, 0, 0, h);
-    grd.addColorStop(0, '#07061c'); grd.addColorStop(0.35, '#1a1248'); grd.addColorStop(0.62, '#3c1f72'); grd.addColorStop(0.82, '#7a3a9a'); grd.addColorStop(1, '#c56aa8');
+    (stops || [[0, '#07061c'], [0.35, '#1a1248'], [0.62, '#3c1f72'], [0.82, '#7a3a9a'], [1, '#c56aa8']]).forEach(s => grd.addColorStop(s[0], s[1]));
     g.fillStyle = grd; g.fillRect(0, 0, w, h);
-    for (let i = 0; i < 260; i++) { const y = Math.pow(Math.random(), 1.6) * h * 0.7, a = 0.25 + Math.random() * 0.75 * (1 - y / (h * 0.7)); g.fillStyle = 'rgba(255,255,255,' + a.toFixed(2) + ')'; const r = Math.random() < 0.08 ? 1.6 : 0.8; g.fillRect(Math.random() * w, y, r, r); }
+    for (let i = 0; i < (stars == null ? 260 : stars); i++) { const y = Math.pow(Math.random(), 1.6) * h * 0.7, a = 0.25 + Math.random() * 0.75 * (1 - y / (h * 0.7)); g.fillStyle = 'rgba(255,255,255,' + a.toFixed(2) + ')'; const r = Math.random() < 0.08 ? 1.6 : 0.8; g.fillRect(Math.random() * w, y, r, r); }
     // Faint cloud bands.
-    for (let i = 0; i < 9; i++) { const y = h * (0.15 + Math.random() * 0.5), r = g.createRadialGradient(Math.random() * w, y, 0, w / 2, y, w * 0.7); r.addColorStop(0, 'rgba(140,90,200,.12)'); r.addColorStop(1, 'rgba(140,90,200,0)'); g.fillStyle = r; g.fillRect(0, y - 40, w, 80); }
+    const cc = cloud || '140,90,200';
+    for (let i = 0; i < 9; i++) { const y = h * (0.15 + Math.random() * 0.5), r = g.createRadialGradient(Math.random() * w, y, 0, w / 2, y, w * 0.7); r.addColorStop(0, 'rgba(' + cc + ',.12)'); r.addColorStop(1, 'rgba(' + cc + ',0)'); g.fillStyle = r; g.fillRect(0, y - 40, w, 80); }
+    if (extra) extra(g, w, h);
   });
+  // V3 worlds: one per 10 levels (game.js WORLDS picks the key). Everything here only recolours the shared scene,
+  // swaps which roadside props are drawn and picks an ambient weather; no new lights, no extra passes.
+  //   sky: gradient stops · fog · hemi: [sky, ground, intensity] · sun · water: [colour, emissive] (lava/sand reuse it)
+  //   bank: ground colour · peak/snow: far mountains · leaf: foliage palette · props: trees | desert | snow | dead | city
+  //   lamp: lamp glow colour · road: lane tint (MeshBasic colour, > 1 brightens) · wx: weather [kind, rate]
+  const ENV = {
+    gece: { fog: '#2a1a52', hemi: ['#9aa6ff', '#2a1838', 1.05], sun: '#d8dcff', water: ['#3aa0e8', '#140c3a'], bank: null, props: 'trees', lamp: '#ffc870', road: 1, wx: ['fireflies', 10],
+      leaf: ['#3f9e4a', '#2f8a43', '#5bb04d', '#6aa83a', '#2c7d52'], peak: '#3c3a72', snow: '#c9c6f2' },
+    col: { sky: [[0, '#1d1240'], [0.3, '#5a2a6a'], [0.55, '#c0506a'], [0.78, '#f08a4a'], [1, '#ffd07a']], stars: 60, cloud: '255,170,120', fog: '#a0584a', fogN: 900,
+      hemi: ['#ffd2a0', '#5a3020', 1.15], sun: '#ffd8a8', water: ['#d9a95e', '#3a1c08'], waterMap: 0.4, bank: '#d4a464', edge: '#e9c98a', props: 'desert', lamp: '#ffb060', road: 1.18, wx: ['sand', 26],
+      leaf: ['#5e8a3a', '#6f9a3c', '#4c7a34', '#7a8a3a'], peak: '#8a4a3a', snow: '#e8b48a' },
+    kar: { sky: [[0, '#0b1a3a'], [0.35, '#1e3c6e'], [0.65, '#4a78b0'], [0.88, '#9cc4e8'], [1, '#e2f2ff']], stars: 120, cloud: '200,230,255', fog: '#6a8ab8', fogN: 800,
+      hemi: ['#d8ecff', '#4a5a7a', 1.2], sun: '#eef6ff', water: ['#8fd0f0', '#1a3a5a'], bank: '#e8f2fa', edge: '#c8dcec', props: 'snow', lamp: '#bfe6ff', road: 1.12, wx: ['snow', 42],
+      leaf: ['#e8f4ff', '#d8ecfa', '#f4faff', '#cfe4f4'], peak: '#5a6e9a', snow: '#ffffff' },
+    volkan: { sky: [[0, '#0a0404'], [0.4, '#2a0806'], [0.66, '#5a120a'], [0.86, '#b02a0e'], [1, '#ff6a1a']], stars: 30, cloud: '255,90,40', fog: '#3a0e08', fogN: 900,
+      hemi: ['#ff9a6a', '#2a0a06', 1.0], sun: '#ffb080', water: ['#ff5a1f', '#ff3a00'], lava: true, bank: '#3a2a28', edge: '#1e1414', props: 'dead', lamp: '#ff7a2a', road: 1.05, wx: ['embers', 30], wx2: ['ash', 14],
+      leaf: ['#2a1c1c', '#3a2420', '#241818', '#4a2a22'], peak: '#2a1a1a', snow: '#ff5a1a' },
+    neon: { sky: [[0, '#05020f'], [0.45, '#1a0636'], [0.72, '#4a0a6a'], [0.9, '#a01a8a'], [1, '#ff3db0']], stars: 120, cloud: '255,60,200', fog: '#2a0a48', fogN: 1000,
+      hemi: ['#b48aff', '#1a0a30', 1.0], sun: '#c0a0ff', water: ['#1a0a40', '#3a0a6a'], grid: true, bank: '#161028', edge: '#ff3df0', props: 'city', neon: true, lamp: '#3df9ff', road: 1.05, wx: ['motes', 18],
+      leaf: ['#3df9ff', '#ff3df0', '#8a5cff', '#3dff9a'], peak: '#1a0a3a', snow: '#ff3df0' },
+    sehir: { sky: [[0, '#04060f'], [0.45, '#0e1630'], [0.72, '#22305a'], [0.9, '#5a4a6a'], [1, '#d08a5a']], stars: 200, cloud: '180,160,200', fog: '#1e2440',
+      hemi: ['#a8b4ff', '#20202a', 1.05], sun: '#e0e4ff', water: ['#2a4a7a', '#0a1430'], bank: '#2a2e3a', edge: '#4a4e5a', props: 'city', lamp: '#ffd27a', road: 1, wx: ['fireflies', 4],
+      leaf: ['#3f8a4a', '#2f7a43', '#4a9a4d'], peak: '#1a2040', snow: '#8a90c0' },
+  };
   // Neon frame glow for the gates: a bright rounded-rect outline that fades out on both sides.
   const frameGlowTex = () => tex(256, 128, (g, w, h) => {
     for (let k = 14; k >= 1; k--) { g.strokeStyle = 'rgba(255,255,255,' + (k === 1 ? 1 : 0.05 + 0.5 / k).toFixed(3) + ')'; g.lineWidth = k * 2.2; g.beginPath(); g.roundRect ? g.roundRect(26, 22, w - 52, h - 30, 10) : g.rect(26, 22, w - 52, h - 30); g.stroke(); }
@@ -169,12 +196,12 @@
       renderer.toneMappingExposure = 1.1;
 
       const scene = new T.Scene();
-      scene.background = skyTex();
+      const sky0 = skyTex(); scene.background = sky0;
       // Night: violet haze in the distance, a cool moon key light and a blue-violet sky fill. The road reads by its
       // own neon (emissive rails, gates, lamps) rather than by extra lights.
       scene.fog = new T.Fog(0x2a1a52, 1100, 2700);
       const camera = new T.PerspectiveCamera(46, 1, 10, 3200);
-      scene.add(new T.HemisphereLight(0x9aa6ff, 0x2a1838, 1.05));
+      const hemi = new T.HemisphereLight(0x9aa6ff, 0x2a1838, 1.05); scene.add(hemi);
       const sun = new T.DirectionalLight(0xd8dcff, 2.0);
       sun.position.set(-220, 420, 160); sun.target.position.set(0, 0, -200);
       scene.add(sun, sun.target);
@@ -196,7 +223,7 @@
         q.s.position.set(x, y, z); q.s.visible = true; q.life = q.max = life; q.size = size;
       }
       const raycaster = new T.Raycaster(), ground = new T.Plane(new T.Vector3(0, 1, 0), 0), hitPt = new T.Vector3();
-      const camBase = new T.Vector3(), camTarget = new T.Vector3();
+      const camBase = new T.Vector3(), camTarget = new T.Vector3(), camQ = new T.Quaternion(), lookV = new T.Vector3(), pushV = new T.Vector3();
       let W = 1, H = 1, level = null, camX = 0;
       const perf = { acc: 0, n: 0 };
       let warmed = false;
@@ -256,12 +283,14 @@
       for (const sx of [-1, 1]) add(scene, new T.BoxGeometry(34, 3, ROAD_LEN), walkMat, sx * 203, 0.5, roadZ, false);
       // Water all around (theme sea colour), grassy banks along the road for the trees and lamps.
       const waterMap = waterTex(); waterMap.repeat.set(30, 30);
+      // Neon world: a glowing cyber grid instead of waves (drawn once, scrolled like the water).
+      const gridMap = tex(64, 64, (g, w, h) => { g.fillStyle = '#000000'; g.fillRect(0, 0, w, h); g.fillStyle = '#7a3a8a'; g.fillRect(0, 0, w, 4); g.fillRect(0, 0, 4, h); g.fillStyle = '#ffffff'; g.fillRect(0, 1, w, 1.5); g.fillRect(1, 0, 1.5, h); }, 60, 60);
       const waterMat = std('#3aa0e8', { map: waterMap });
       const water = add(scene, new T.PlaneGeometry(4200, 4200), waterMat, 0, -24, -900, false); water.rotation.x = -Math.PI / 2;
-      const grassMat = std('#6fbf57', { roughness: 1 });
+      const grassMat = std('#6fbf57', { roughness: 1 }), edgeMat = std('#f1dfae');
       for (const sx of [-1, 1]) {
         add(scene, new T.BoxGeometry(250, 26, ROAD_LEN + 600), grassMat, sx * 345, -12, roadZ - 300, false);
-        add(scene, new T.BoxGeometry(14, 22, ROAD_LEN + 600), std('#f1dfae'), sx * 476, -15, roadZ - 300, false);
+        add(scene, new T.BoxGeometry(14, 22, ROAD_LEN + 600), edgeMat, sx * 476, -15, roadZ - 300, false);
       }
       // Clouds far away.
       const cloudMat = new T.MeshLambertMaterial({ color: '#4a3a7a', emissive: '#7a4ab0', emissiveIntensity: 0.4, flatShading: true });
@@ -323,7 +352,27 @@
         decos.push({ kind: 'bush', x: side * (226 + r * 26), s: i * DECO_P / 60 + 11, sz: 0.7 + r * 0.6, c: C_(['#4fa04a', '#62b34f', '#3f8f45', '#7cbf52'][i % 4]), rot: r * TAU }); }
       for (let i = 0; i < 24; i++) decos.push({ kind: 'flag', x: (i % 2 ? 1 : -1) * 214, s: Math.floor(i / 2) * DECO_P / 12 + DECO_P / 24, sz: 1, side: i % 2 });
       // Moonlit foliage: shift the greens toward blue-teal (the scene reads as night, the gates and soldiers pop).
-      const NIGHT = C_('#1c2a66'); decos.forEach(d => { if (d.c) d.c.lerp(NIGHT, 0.3); });
+      const NIGHT = C_('#1c2a66'); decos.forEach(d => { if (d.c) { d.c0 = d.c.clone(); d.c.lerp(NIGHT, 0.3); } });
+
+      // ---------- V3 world props: city blocks (night city / neon), cacti (desert) ----------
+      // Facades: dark walls with a grid of lit windows; the same texture is the emissive map, so only the windows glow.
+      const winTex = tex(64, 128, (g, w, h) => {
+        g.fillStyle = '#20222c'; g.fillRect(0, 0, w, h);
+        for (let y = 6; y < h - 4; y += 10) for (let x = 5; x < w - 4; x += 11) {
+          const on = Math.random() < 0.55; g.fillStyle = on ? (Math.random() < 0.3 ? '#9fd8ff' : '#ffd890') : '#14161e'; g.fillRect(x, y, 6, 6);
+        }
+        g.fillStyle = 'rgba(255,255,255,.06)'; g.fillRect(0, 0, w, 3);
+      });
+      const blockMat = new T.MeshLambertMaterial({ color: '#ffffff', map: winTex, emissive: '#ffffff', emissiveMap: winTex, emissiveIntensity: 0.9 });
+      const blocks = inst(new T.BoxGeometry(1, 1, 1).translate(0, 0.5, 0), blockMat, 100, true, false);
+      // Rooftop neon strips (neon world): unlit bright bars on the road-facing roof edge and down one corner.
+      const neonBars = inst(new T.BoxGeometry(1, 1, 1), new T.MeshBasicMaterial({ color: '#ffffff' }), 200, true, false);
+      const NEON_C = [C_('#ff3df0'), C_('#3df9ff'), C_('#8a5cff'), C_('#3dff9a')];
+      const cactusM = new T.MeshLambertMaterial({ color: '#5e8f3a', flatShading: true });
+      const cacti = inst(new T.CapsuleGeometry(1, 3, 2, 7), cactusM, 60, false, false);
+      const cactusArms = inst(new T.CapsuleGeometry(0.7, 1.6, 2, 6).translate(0, 0.8, 0), cactusM, 120, false, false);
+      let env = ENV.gece, wxT = 0;
+      const skyCache = {};
 
       // ---------- Soldiers ----------
       function crowd(max, o) {
@@ -386,6 +435,34 @@
       }
       gear.crown.material.side = T.DoubleSide;
       const foes = crowd(MAX_E, { leg: '#3a1418', skin: '#d8a27a', spike: '#c9c9c9', club: true });
+      // V3 readability: enemies get glowing red eyes (one colour change, no extra draw call).
+      foes.eyes.material.color.set('#ff3030');
+      // V3 squad detail: boots and shoulder pads on the full-detail soldiers; a ground glow in the team colour under
+      // the army and two standard bearers once the crowd is big ("giant army" feel).
+      const boots = inst(new T.BoxGeometry(2.4, 1.6, 3.4), toon('#1b1c22'), MAX_S * 2, false, false, 0.35);
+      const pads = inst(new T.SphereGeometry(1.7, 8, 6, 0, TAU, 0, Math.PI / 2), toon('#ffffff'), MAX_S * 2, true, false, 0.3);
+      const armyGlow = new T.Mesh(new T.PlaneGeometry(1, 1).rotateX(-Math.PI / 2), new T.MeshBasicMaterial({ map: softTex(), color: '#3b82f6', transparent: true, depthWrite: false, blending: T.AdditiveBlending, opacity: 0.5 }));
+      armyGlow.renderOrder = 2; scene.add(armyGlow);
+      const bearers = [0, 1].map(() => {
+        const g = new T.Group(), pole = add(g, new T.CylinderGeometry(0.9, 0.9, 70, 6), toon('#d8dce2'), 0, 35, 0, false);
+        const cloth = new T.Mesh(new T.PlaneGeometry(26, 17, 6, 1).translate(13, 0, 0), toon('#3b82f6', { side: T.DoubleSide }));
+        cloth.position.y = 60; g.add(cloth); add(g, new T.SphereGeometry(2, 8, 6), toon('#ffd23f'), 0, 71, 0, false);
+        g.visible = false; scene.add(g); return { g, cloth, pole };
+      });
+      // Victory treasure: a chest that pops up where the boss fell and bursts open when the army arrives.
+      const chest = (() => {
+        const g = new T.Group(), wood = toon('#8a4a1e'), gold = toon('#ffc928', { emissive: '#6a4200' });
+        inked(g, new T.BoxGeometry(60, 30, 38), wood, 0, 15, 0, 1.2);
+        for (const sx of [-1, 1]) add(g, new T.BoxGeometry(6, 31, 39), gold, sx * 22, 15, 0, false);
+        add(g, new T.BoxGeometry(61, 4, 39), gold, 0, 2, 0, false);
+        const lid = new T.Group(); lid.position.set(0, 30, -19); g.add(lid);
+        const top = new T.Mesh(new T.CylinderGeometry(19, 19, 60, 14, 1, false, 0, Math.PI), wood); top.rotation.z = Math.PI / 2; top.position.z = 19; lid.add(top);
+        for (const sx of [-1, 1]) { const b = new T.Mesh(new T.CylinderGeometry(19.6, 19.6, 6, 14, 1, false, 0, Math.PI), gold); b.rotation.z = Math.PI / 2; b.position.set(sx * 22, 0, 19); lid.add(b); }
+        const lock = add(g, new T.BoxGeometry(9, 11, 3), gold, 0, 27, 20, false);
+        const shine = new T.Mesh(new T.PlaneGeometry(1, 1), new T.MeshBasicMaterial({ map: softTex(), color: '#ffd23f', transparent: true, depthWrite: false, blending: T.AdditiveBlending }));
+        shine.position.y = 40; shine.renderOrder = 5; g.add(shine);
+        g.visible = false; scene.add(g); return { g, lid, lock, shine };
+      })();
       const foeShield = inst(new T.BoxGeometry(11, 13, 1.6), std('#9aa3b0', { emissive: '#1a1f28' }), 80, false, false);
       const foeRifle = inst(new T.BoxGeometry(1.4, 1.8, 14), std('#1c1f24'), 80, false, false);
       const foeBomb = inst(new T.SphereGeometry(3.4, 12, 10), new T.MeshBasicMaterial({ color: '#ffffff' }), 80, true, false);
@@ -436,7 +513,7 @@
       const seenFx = new WeakSet();
       const puff = (x, y, z, size, life, c, vy) => { if (puffs.length < MAX_FX) puffs.push({ x, y, z, vx: (Math.random() - 0.5) * 14, vy: vy == null ? 18 + Math.random() * 16 : vy, vz: (Math.random() - 0.5) * 14, life, max: life, size, c: c || C_('#8e8e8e') }); };
       const BOMB_A = C_('#ff3b1a'), BOMB_B = C_('#ffd23f');
-      const SMOKE_L = C_('#b8b2aa'), SMOKE_S = C_('#9a948c'), SMOKE_M = C_('#c4beb6');
+      const DUST_C = C_('#c8bca8'), SMOKE_L = C_('#b8b2aa'), SMOKE_S = C_('#9a948c'), SMOKE_M = C_('#c4beb6');
       const FIRE_A = C_('#d8923a'), FIRE_B = C_('#c8440c'), FIRE_C = C_('#3a1004'), tmpC = new T.Color();
 
       // ---------- Mortar teams and bombers (pooled) ----------
@@ -807,6 +884,38 @@
         }
       }
 
+      // ---------- V3 moments ----------
+      const GATE_G = '#3be07a', GATE_R = '#ff4757', GOLD = '#ffd23f';
+      let clashN = 0, bossPush = 0;
+      function moment(v, S) {
+        const x = v.x - CX, z = v.y - CZ;
+        if (v.kind === 'gate') {
+          const c = v.mul ? GOLD : v.d >= 0 ? GATE_G : GATE_R, big = Math.min(1.6, 0.7 + Math.abs(v.d) / 30);
+          // Flash in the frame, a rising curtain of sparks across the whole gate and a ring on the road.
+          fx.star(x, 28, z + 4, c, 10 * big, 0.35); boomFlash(x, 26, z + 6, 120 * big, 0.25);
+          for (let k = 0; k < 14; k++) { const gx = x + (k / 13 - 0.5) * v.w; fx.emit(gx, rnd(4, 40), z, rnd(-10, 10), rnd(60, 160), rnd(10, 40), rnd(0.35, 0.7), 2.6, 0.6, k % 3 ? c : '#ffffff', 1, 260, 2, 0.03, 2); }
+          fx.ring(x, 3, z + 10, c, 10 * big, 26, '#ffffff');
+          if (ringFx.length < 8) ringFx.push({ x, z: z + 10, r: v.w * 0.7, t: 0, c: C_(c) });
+          // x2 gate: a gold explosion, confetti and a camera kick.
+          if (v.mul) { fx.explosion(x, 20, z, 22, { n: 30, rocks: 0, shake: 0, scorch: false, chips: false, color: '#ffb020' }); fx.confetti(x, 30, z, 40, 9); fx.coins(x, 30, z, 20, 7); boomFlash(x, 30, z, 320, 0.45); camKick = Math.max(camKick, 9); }
+          else if (v.d < 0) fx.shower(x, 30, z, 0, 1, GATE_R, 12);
+        } else if (v.kind === 'clash') {
+          // Armies collide: dust rolling along the road, steel sparks, a small shock ring (throttled per frame).
+          if (clashN++ > 5) return;
+          fx.impact(x, 14, z, '#ffd8a0', v.big ? 1.2 : 0.7, v.big ? 3 : 1, '#5a5060');
+          puff(x + rnd(-10, 10), 5, z + rnd(-6, 6), v.big ? 16 : 10, 0.9, C_('#a89a8a'), 10);
+          if (Math.random() < 0.5) puff(x + rnd(-14, 14), 4, z + rnd(-8, 8), v.big ? 12 : 8, 0.8, C_('#8a7c6c'), 6);
+          if (v.big && ringFx.length < 8) ringFx.push({ x, z, r: 50, t: 0, c: C_('#ffd8a0') });
+        } else if (v.kind === 'phase') {
+          // Boss enrages: a red shock ring, a burst of embers and a camera kick; the model glows red from now on.
+          fx.ring(x, 20, z, '#ff3b3b', 26, 48, '#ffd23f'); fx.star(x, 60, z, '#ff4a4a', 26, 0.5); boomFlash(x, 50, z, 380, 0.5);
+          if (ringFx.length < 8) ringFx.push({ x, z, r: 220, t: 0, c: C_('#ff3b3b') });
+          camKick = Math.max(camKick, 12);
+        } else if (v.kind === 'cleared') {
+          fx.ring(x, 6, z + 120, '#ffe066', 22, 40, '#ffffff'); fx.star(x, 40, z + 100, '#ffe066', 20, 0.6);
+        }
+      }
+
       function warmUp() {
         const hidden = [];
         scene.traverse(o => { if (!o.visible) { hidden.push(o); o.visible = true; } });
@@ -954,12 +1063,27 @@
         setLevel(S) {
           disposeLevel();
           const root = new T.Group(), th = S.theme;
-          const land = new T.Color(th.land || '#7cc464').lerp(new T.Color('#3f9a45'), 0.4).lerp(new T.Color('#1a2850'), 0.42);
+          env = ENV[th.env] || ENV.gece;
+          const land = env.bank ? new T.Color(env.bank) : new T.Color(th.land || '#7cc464').lerp(new T.Color('#3f9a45'), 0.4).lerp(new T.Color('#1a2850'), 0.42);
           if (grassMat.map) grassMat.map.dispose();
           grassMat.map = grassTex('#' + land.getHexString()); grassMat.map.repeat.set(26, 26); grassMat.color.set('#ffffff'); grassMat.needsUpdate = true;
-          hillMat.color.copy(land).lerp(new T.Color('#2a2060'), 0.45);
-          waterMat.color.set(th.sea || '#3aa0e8').lerp(new T.Color('#0e1440'), 0.62); waterMat.emissive.set('#140c3a');
-          scene.fog.color.set('#2a1a52');
+          hillMat.color.copy(land).lerp(new T.Color(env.bank ? env.peak : '#2a2060'), 0.45);
+          if (env.water && th.env && th.env !== 'gece') { waterMat.color.set(env.water[0]); waterMat.emissive.set(env.water[1]); waterMat.emissiveIntensity = env.lava ? 0.9 : 1; }
+          else { waterMat.color.set(th.sea || '#3aa0e8').lerp(new T.Color('#0e1440'), 0.62); waterMat.emissive.set('#140c3a'); waterMat.emissiveIntensity = 1; }
+          waterMat.map = env.grid ? null : waterMap; waterMat.emissiveMap = env.grid ? gridMap : null; if (env.grid) waterMat.emissive.set('#ff5ae8'); waterMat.needsUpdate = true;
+          // V3 world: sky, fog, light colours, banks, far peaks, foliage, lamp glow, road tint.
+          const sk = th.env || 'gece';
+          scene.background = skyCache[sk] || (skyCache[sk] = sk === 'gece' ? sky0 : skyTex(env.sky, env.stars, env.cloud));
+          scene.fog.color.set(env.fog); scene.fog.near = env.fogN || 1100;
+          hemi.color.set(env.hemi[0]); hemi.groundColor.set(env.hemi[1]); hemi.intensity = env.hemi[2]; sun.color.set(env.sun);
+          edgeMat.color.set(env.edge || '#f1dfae'); edgeMat.emissive = edgeMat.emissive || new T.Color(); edgeMat.emissive.set(env.neon ? env.edge : '#000000');
+          peakMat.color.set(env.peak); snowMat.color.set(env.snow); snowMat.emissive.set(env.lava ? '#ff3a00' : env.neon ? '#ff3df0' : '#5a4a9a'); snowMat.emissiveIntensity = env.lava || env.neon ? 0.8 : 0.35;
+          cloudMat.color.set(env.fog); cloudMat.emissive.set(env.lava ? '#a02a0a' : env.neon ? '#7a1a9a' : '#7a4ab0');
+          let li = 0; decos.forEach(d => { if (d.c0) (sk === 'gece' ? d.c.copy(d.c0) : d.c.copy(C_(env.leaf[li++ % env.leaf.length]))).lerp(NIGHT, sk === 'gece' ? 0.3 : sk === 'kar' ? 0.08 : 0.25); });
+          rocks.material.color.set(env.props === 'desert' ? '#c98a52' : env.props === 'dead' ? '#3a2a2a' : env.props === 'snow' ? '#dfe9f2' : '#9a9aa2');
+          lampGlow.material.color.set(env.lamp); lampPool.material.color.set(env.lamp).multiplyScalar(0.7); lampHeads.material.emissive.set(env.lamp);
+          blockMat.emissive.set(env.neon ? '#d8b8ff' : '#ffe2b0');
+          tilesR.material.color.setScalar(env.road); tilesE.material.color.setScalar(env.road);
           const castle = makeCastle(root);
           const bosses = { kale: castle, dev: makeDev(root), tank: makeTank(root), heli: makeHeli(root), ejder: makeDragon(root) };
           scene.add(root);
@@ -991,7 +1115,7 @@
             d *= Math.pow(Math.max((maxX - minX) / (W * 1.02), (maxY - minY) / availH), 0.85);
             camTarget.z += ((minY + maxY) / 2 - (top + bottom) / 2) * (650 / Math.max(1, maxY - minY)) * 0.5;
           }
-          camBase.copy(camera.position);
+          camBase.copy(camera.position); camQ.copy(camera.quaternion);
         },
 
         pick(clientX, clientY) {
@@ -1006,7 +1130,9 @@
         render(S, dt, info) {
           if (!level || level.S !== S) return;
           const L = level, t = S.t, C = S.castle, time = performance.now() / 1000;
-          nBlob = 0; nZone = 0; nmkZ = 0;
+          // V3 final blow: the boss's fall plays in slow motion for its first second (drawing only: the game is over).
+          if (L.dying && (L.dying.rt = (L.dying.rt || 0) + dt) < 0.7) dt *= 0.4;
+          nBlob = 0; nZone = 0; nmkZ = 0; clashN = 0;
           // Adaptive quality: drop the resolution if the phone cannot keep up.
           perf.acc += dt; perf.n++;
           if (perf.acc > 2.5) {
@@ -1019,7 +1145,7 @@
           }
           const D = S.dist, DR = S.rdist;
           // Road surface scrolls with the road position.
-          asphalt.offset.y = D / 120; curb.offset.y = D / 40; waterMap.offset.set(Math.sin(time * 0.3) * 0.05, (D / 140 + time * 0.02) % 1); walkMat.map.offset.y = D / 17;
+          asphalt.offset.y = D / 120; curb.offset.y = D / 40; waterMap.offset.set(Math.sin(time * 0.3) * 0.05, (D / 140 + time * 0.02) % 1); walkMat.map.offset.y = D / 17; gridMap.offset.y = (D / 140) % 1;
           if (grassMat.map) grassMat.map.offset.y = D / 130;
           // Lane tiles: reward lanes use the reward belt position (it keeps moving during the siege).
           let nr = 0, ne = 0, ns = 0;
@@ -1039,9 +1165,28 @@
           }
           done(seps, ns);
           // Scenery.
-          let nt = 0, ncw = 0, nro = 0, npo = 0, npi = 0, nbu = 0, nfl = 0;
+          let nt = 0, ncw = 0, nro = 0, npo = 0, npi = 0, nbu = 0, nfl = 0, nbk = 0, nnb = 0, nca = 0, ncar = 0;
+          const PR = env.props, city = PR === 'city';
           for (const d of decos) {
             const y = ((D - d.s - FAR_Y) % DECO_P + DECO_P) % DECO_P + FAR_Y, z = y - CZ;
+            // V3 worlds swap the roadside props: city blocks for trees, cacti and mesas in the desert, bare trunks and
+            // obsidian spikes on the volcano, snow mounds in the snowfield (same positions, same instanced meshes).
+            if (city && (d.kind === 'tree' || d.kind === 'pine')) {
+              const r = (d.s * 7.31) % 1, bw = 38 + r * 34, bh = 50 + ((d.s * 3.7) % 1) * 130 * (Math.abs(d.x) > 300 ? 1.4 : 0.8), bx = d.x + Math.sign(d.x) * 30;
+              if (nbk < 100) put(blocks, nbk++, bx, -10, z, bw, bh, bw * 0.9, 0, 0, 0, d.c);
+              if (env.neon && nnb < 198) { const nc = NEON_C[(d.s | 0) % 4]; put(neonBars, nnb++, bx, bh - 8, z + bw * 0.45, bw + 2, 2.4, 2.4, 0, 0, 0, nc); put(neonBars, nnb++, bx - Math.sign(d.x) * bw * 0.5, bh * 0.5 - 8, z + bw * 0.45, 2.4, bh, 2.4, 0, 0, 0, nc); }
+              continue;
+            }
+            if (PR === 'desert' && d.kind === 'pine') {
+              const k = d.sz * 4.2; blob(d.x + 4, z + 4, 24 * d.sz, 22 * d.sz);
+              if (nca < 60) put(cacti, nca++, d.x, 2.6 * k, z, k, k, k);
+              if (ncar < 118) { put(cactusArms, ncar++, d.x - 1.4 * k, 2.4 * k, z, k, k, k, 0, 0, 1.1); put(cactusArms, ncar++, d.x + 1.4 * k, 3.2 * k, z, k * 0.8, k * 0.8, k * 0.8, 0, 0, -1.1); }
+              continue;
+            }
+            if (PR === 'desert' && d.kind === 'tree') { put(rocks, nro++, d.x, 8 * d.sz, z, 22 * d.sz, 16 * d.sz, 20 * d.sz, 0, d.rot, 0); continue; }
+            if (city && (d.kind === 'bush' || d.kind === 'rock')) continue;
+            if (PR === 'dead' && d.kind === 'tree') { put(trunks, nt++, d.x, 12 * d.sz, z, d.sz * 1.1, d.sz * 1.6, d.sz * 1.1, 0.2, d.rot, 0.15); continue; }
+            if (PR === 'snow' && d.kind === 'bush') { put(bushes, nbu++, d.x, 1 * d.sz, z, 11 * d.sz, 5 * d.sz, 11 * d.sz, 0, d.rot, 0, d.c); continue; }
             if (d.kind === 'tree') {
               blob(d.x + 6, z + 6, 38 * d.sz, 34 * d.sz);
               put(trunks, nt++, d.x, 9 * d.sz, z, d.sz, d.sz, d.sz);
@@ -1064,6 +1209,13 @@
               put(lampPool, npo, lx - Math.sign(d.x) * 8, 1.4, z, 62, 1, 48);
               put(lampHeads, npo++, lx, 44, z, 1, 1, 1);
             }
+          }
+          done(blocks, nbk); done(neonBars, nnb); done(cacti, nca); done(cactusArms, ncar);
+          // Ambient weather of the world (snow, ash and embers, blowing sand, neon motes, fireflies): a few GPU
+          // particles per second over the visible road; skipped when the phone is struggling.
+          if (!lowFx && env.wx) {
+            fx.weather(env.wx[0], 0, -350, 1100, 1500, 420, env.wx[1], dt, 3);
+            if (env.wx2) fx.weather(env.wx2[0], 0, -350, 1100, 1500, 420, env.wx2[1], dt, 3);
           }
           done(trunks, nt); done(crowns, ncw); done(rocks, nro); done(poles, npo); done(lampHeads, npo); done(lampGlow, npo); done(lampPool, npo); done(pines, npi); done(bushes, nbu); done(flags, nfl); done(flagPoles, nfl);
 
@@ -1103,6 +1255,23 @@
           if (!C || C.dead) L.bosses.heli.spot.visible = false;
           const K = C ? L.bosses[C.type] || L.castle : L.castle;
           if (L.dying) dyingBoss(L.dying, dt);
+          // V3 victory: once the boss has blown up, the army charges up the road to the treasure chest that popped out
+          // of the wreck; the lid bursts open in a fountain of gold and confetti.
+          let runOff = 0;
+          if (L.dying && L.dying.t >= 0.5) {
+            const V = L.win || (L.win = { t: 0, open: false, cx: L.dying.x, cz: Math.max(L.dying.z + 40, -260) });
+            V.t += dt;
+            const goal = Math.max(0, SQUAD_Y - CZ - V.cz - 90), u = Math.min(1, V.t / 0.8);
+            runOff = goal * (1 - Math.pow(1 - u, 2));
+            chest.g.visible = true; chest.g.position.set(V.cx, 0, V.cz);
+            const pop = Math.min(1, V.t / 0.35); chest.g.scale.setScalar(1.4 * (pop < 1 ? pop * (1.25 - 0.25 * pop) : 1 + 0.03 * Math.sin(time * 6)));
+            chest.g.rotation.y = Math.sin(time * 2) * 0.12;
+            chest.shine.scale.setScalar(V.open ? 160 + 30 * Math.sin(time * 8) : 70 + 10 * Math.sin(time * 5));
+            if (!V.open && u >= 1) { V.open = true; fx.coins(V.cx, 40, V.cz, 50, 10); fx.confetti(V.cx, 50, V.cz, 60, 12); fx.star(V.cx, 50, V.cz, GOLD, 30, 0.6); boomFlash(V.cx, 40, V.cz, 300, 0.5); camKick = Math.max(camKick, 6); }
+            chest.lid.rotation.x = V.open ? -Math.min(2.1, (V.t - 0.8) * 9) : 0;
+            if (V.open && Math.random() < dt * 14) fx.coins(V.cx, 44, V.cz, 4, 6);
+            if (Math.random() < dt * 6) fx.mote(V.cx + rnd(-30, 30), 30, V.cz, GOLD, 1.2, 1.2, 8);
+          } else chest.g.visible = false;
           if (C && !C.dead) {
             K.g.position.set(C.x - CX, 0, C.y - CZ);
             // Entrance: each boss arrives in its own way during its first ~1.4 s (the game holds its attacks anyway
@@ -1200,7 +1369,10 @@
               }
               if (C.type === 'heli') K.spin = 1;
             }
-            K.wallMat.emissive.setRGB(C.flash * 0.35, C.flash * 0.15, C.flash * 0.1);
+            // V3 phase 2: the boss smoulders red (pulsing) and sheds embers.
+            const rage = C.phase2 ? 0.18 + 0.14 * Math.sin(time * 7) : 0;
+            K.wallMat.emissive.setRGB(C.flash * 0.35 + rage, C.flash * 0.15 + rage * 0.15, C.flash * 0.1);
+            if (C.phase2 && Math.random() < dt * 12) fx.mote(C.x - CX + rnd(-0.5, 0.5) * C.w, (C.type === 'heli' || C.type === 'ejder' ? K.g.position.y : 40) + rnd(-20, 30), C.y - CZ + rnd(0, 20), Math.random() < 0.5 ? '#ff4a2a' : '#ffb040', 1.4, 1, 10);
             // Hits on the boss: sparks and chips bursting off its surface (throttled), bigger for rockets/lasers.
             if (C.flash > 0.9 && (K.hitFx = (K.hitFx || 0) - dt) <= 0) {
               K.hitFx = 0.07;
@@ -1224,20 +1396,27 @@
           const isTube = gun[0] === 'tube', gm = isTube ? gunTube : gunBox;
           gunBox.material.color.set(gun[4]); gunTube.material.color.set(gun[4]);
           gunTube.material.emissive = gunTube.material.emissive || new T.Color(); gunTube.material.emissive.set(gun[5] || '#000000');
-          let n = 0, nl = 0, ng = 0, nh = 0, nct = 0;
-          const flashOn = S.fireFlash > 0 && info.playing;
+          let n = 0, nl = 0, ng = 0, nh = 0, nct = 0, nbt = 0, npd = 0;
+          const flashOn = S.fireFlash > 0 && info.playing, moving = info.playing || runOff > 0;
+          const padC = C_(info.skin).multiplyScalar(0.7);
           const gk = GEAR[info.gear] || GEAR.mavi, beretC = C_(gk.beret || '#ffffff'), plumeC = C_(gk.plume || '#ffffff'), capeC = C_(gk.cape || '#ffffff');
           for (const m of [squad.torso, squad.armL, squad.armR, squad.helmet]) { if (m.material.emissive) m.material.emissive.setScalar(gk.glow ? gk.glow * (0.7 + 0.3 * Math.sin(time * 3)) : 0); }
           // The squad's own soldiers (full detail), then the filler marchers (lite parts) that make the crowd look dense.
           const nDet = Math.min(form.length, MAX_S), fill = lowFx ? [] : fillersFor(q.n, form), total = nDet + fill.length;
           for (let i = 0; i < total; i++) {
             const det = i < nDet, p = det ? form[i] : fill[i - nDet], B = det ? squad : lite, k = det ? n : nl;
-            const x = q.x + p.x - CX, z = SQUAD_Y + p.y - CZ, ph = time * 14 + i * 1.7, sw = info.playing ? Math.sin(ph) * 0.7 : 0;
-            const bob = info.playing ? Math.abs(Math.sin(ph)) * 0.9 : 0;
+            // V3: livelier run — longer stride, a forward lean, the torso rolls with each step (faster when charging).
+            const x = q.x + p.x - CX, z = SQUAD_Y + p.y - CZ - runOff, ph = time * (runOff > 0 ? 20 : 14) + i * 1.7, sw = moving ? Math.sin(ph) * 0.85 : 0;
+            const bob = moving ? Math.abs(Math.sin(ph)) * 1.1 : 0, roll = moving ? Math.sin(ph) * 0.07 : 0, lean = runOff > 0 ? 0.3 : 0;
             if (det) blob(x, z + 1, 11 * s * 0.9, 9 * s * 0.9);
             put(B.legL, k, x - 1.7 * s, 6.6 * s, z, s, s, s, sw, 0, 0);
             put(B.legR, k, x + 1.7 * s, 6.6 * s, z, s, s, s, -sw, 0, 0);
-            put(B.torso, k, x, (9.6 + bob) * s, z, s, s, s, 0.12 * dir, 0, 0, bodyC);
+            put(B.torso, k, x, (9.6 + bob) * s, z, s, s, s, 0.12 * dir - lean, 0, roll, bodyC);
+            if (det) {
+              const fy = 6.6 - 5.4 * Math.cos(sw), fz = 5.4 * Math.sin(sw);
+              put(boots, nbt++, x - 1.7 * s, fy * s, z - fz * s + 0.6 * s, s, s, s, sw, 0, 0); put(boots, nbt++, x + 1.7 * s, (6.6 - 5.4 * Math.cos(-sw)) * s, z + fz * s + 0.6 * s, s, s, s, -sw, 0, 0);
+              put(pads, npd++, x - 3.3 * s, (12.9 + bob) * s, z, s, s * 0.8, s, 0, 0, 0.35 + roll, padC); put(pads, npd++, x + 3.3 * s, (12.9 + bob) * s, z, s, s * 0.8, s, 0, 0, -0.35 + roll, padC);
+            }
             // Both arms forward on the weapon, a little recoil kick when firing.
             const kick = flashOn ? 0.15 : 0;
             put(B.armL, k, x - 3.3 * s, (12.4 + bob) * s, z, s, s, s, -1.25 - kick, 0, -0.35, bodyC);
@@ -1261,6 +1440,21 @@
             ng++; if (det) n++; else nl++;
           }
           for (const m of [squad.legL, squad.legR, squad.armL, squad.armR, squad.torso, squad.belt, squad.head, squad.eyes, squad.helmet, squad.pack]) done(m, n);
+          done(boots, nbt); done(pads, npd);
+          // Army ground glow (team colour, grows with the crowd) and the standard bearers of a big army.
+          { const rows = Math.ceil(Math.min(q.n, 60) / Math.max(1, Math.min(6, q.n))), depth = rows * 12.5 * s / 2.3 + 30, wid = Math.min(6, q.n) * 14 + 50;
+            armyGlow.visible = q.n > 0; armyGlow.material.color.set(info.skin); armyGlow.material.opacity = 0.32 + Math.min(0.3, q.n / 300) + 0.06 * Math.sin(time * 4);
+            armyGlow.position.set(q.x - CX, 1.1, SQUAD_Y - CZ - runOff + depth * 0.45); armyGlow.scale.set(wid * 1.5, 1, depth * 1.6);
+            const big = q.n >= 25 && !lowFx;
+            bearers.forEach((b, k) => {
+              b.g.visible = big; if (!big) return;
+              const sx = k ? 1 : -1, bz = SQUAD_Y - CZ - runOff + Math.min(rows, 10) * 12.5 * 0.85 + 6;
+              b.g.position.set(q.x - CX + sx * (Math.min(6, q.n) * 7 + 4), (moving ? Math.abs(Math.sin(time * 14 + k)) * 2 : 0), bz);
+              b.cloth.material.color.set(info.skin); b.cloth.rotation.y = (k ? Math.PI : 0) + Math.sin(time * 5 + k * 2) * 0.35; b.cloth.rotation.z = Math.sin(time * 7 + k) * 0.06;
+            });
+            // Dust kicked up behind a marching army (more soldiers, more dust).
+            if (moving && !lowFx && Math.random() < dt * Math.min(4, 1 + q.n / 30)) puff(q.x - CX + rnd(-wid / 2, wid / 2), 2, SQUAD_Y - CZ - runOff + depth, 3.5 + Math.min(4, q.n / 30), 0.7, DUST_C, 4);
+          }
           for (const k in lite) done(lite[k], nl);
           done(gear.beret, gk.hat === 'beret' ? ng : 0); done(gear.plume, gk.hat === 'plume' ? ng : 0); done(gear.spike, gk.hat === 'spike' ? ng : 0);
           done(gear.crown, gk.hat === 'crown' ? ng : 0); done(gear.horn, nh); done(gear.crownTip, nct); done(gear.cape, gk.cape ? ng : 0);
@@ -1441,6 +1635,8 @@
           boomLight.intensity = strongest * 6; boomLight.position.set(bx, 40, bz);
           // Particles from the game (hit sparks, kills): handed to the GPU system once, when they appear.
           for (const p0 of S.parts) if (!seenFx.has(p0)) { seenFx.add(p0); fx.emit(p0.x - CX, 8, p0.y - CZ, p0.vx * 1.3, rnd(50, 130), p0.vy * 1.3, rnd(0.35, 0.6), 2.6, 0.6, p0.c, 1, 320, 3, 0.03, 2); }
+          // V3 moments handed over by the game (S.ev): gate bursts, army clashes, the boss's phase change, a crushed wave.
+          if (S.ev) for (const v of S.ev) if (!seenFx.has(v)) { seenFx.add(v); moment(v, S); }
           // Smoke puffs.
           let npf = 0;
           for (const p0 of puffs) {
@@ -1457,6 +1653,16 @@
           // The camera leans a little toward the squad's side of the road (parallax) and sways with the run.
           camX += ((S.squad.x - CX) * 0.1 - camX) * Math.min(1, dt * 3);
           camera.position.copy(camBase); camera.position.x += camX; if (info.playing) camera.position.y += Math.sin(time * 7) * 0.6;
+          // V3 cinematic camera: pushes in on the boss while it makes its entrance and again while it falls, then
+          // follows the army's victory charge. Look-at is only touched while pushing (the gameplay view is unchanged).
+          let push = 0, px = 0, py = 0, pz = 0;
+          if (C && !C.dead && C.t < 2.6) { push = 0.32 * Math.sin(Math.min(1, C.t / 2.6) * Math.PI); px = C.x - CX; py = C.type === 'heli' || C.type === 'ejder' ? 110 : 50; pz = C.y - CZ; }
+          else if (L.dying) { const u = L.dying.t; push = 0.3 * Math.min(1, u * 2) * Math.max(0, 1 - Math.max(0, (L.win ? L.win.t : 0) - 0.4) * 0.8); px = L.dying.x; py = 50; pz = L.dying.z; }
+          bossPush += (push - bossPush) * Math.min(1, dt * 5);
+          if (bossPush > 0.003) {
+            pushV.set(px, py + 260, pz + 420); camera.position.lerp(pushV, bossPush);
+            lookV.copy(camTarget).lerp(v3.set(px, py * 0.6, pz), bossPush * 1.6); camera.lookAt(lookV);
+          } else camera.quaternion.copy(camQ);
           if (S.shake) camera.position.add(v3.set((Math.random() - 0.5) * S.shake, (Math.random() - 0.5) * S.shake, 0));
           // Renderer-side kicks (boss landing / death) on top of the game's shake.
           camKick = Math.max(0, camKick - dt * 30);

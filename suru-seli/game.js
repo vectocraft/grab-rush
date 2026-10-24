@@ -53,6 +53,16 @@
     { name: L('Laser', 'Lazer'), icon: '⚡', dmg: 2.4, rate: 0.1, spread: 1, speed: 900, color: '#7df9ff', pierce: true, kind: 'laser', gun: 5 },
   ];
   const CRATE_ICON = { mortar: '💣', air: '✈️', troops: '🪖' };
+  // V3: a 3D world per 10 levels (same cadence as ortak/themes.js; the 2D field colours come along for the 2D renderer).
+  const WORLDS = [
+    { env: 'gece', icon: '🌃', name: L('Night Valley', 'Gece Vadisi') },
+    { env: 'col', icon: '🏜️', name: L('Desert', 'Çöl'), field: ['#7c4a1e', '#3a2614', '#5a3a1a'] },
+    { env: 'kar', icon: '❄️', name: L('Snowfield', 'Kar Diyarı'), field: ['#334155', '#1e3a4f', '#0c4a6e'] },
+    { env: 'volkan', icon: '🌋', name: L('Volcano', 'Volkan'), field: ['#7f1d1d', '#3b0f0f', '#431407'] },
+    { env: 'neon', icon: '🌆', name: L('Neon City', 'Neon Şehir'), field: ['#4c1d95', '#1e0b3a', '#0b2a4a'] },
+    { env: 'sehir', icon: '🏙️', name: L('Night City', 'Gece Şehri'), field: ['#1e293b', '#111827', '#1f2937'] },
+  ];
+  const worldOf = lv => Themes.pick ? Themes.pick(WORLDS, lv) : Themes.forLevel(lv);
   // Support abilities: free to use (no ads), recharge over time, unlocked by level.
   const SUP = {
     heli: { icon: '🚁', name: L('Reinforcements', 'Takviye'), cd: 28, first: 8, lv: 1 },
@@ -193,11 +203,11 @@
     };
     const boss = bossOf(lv);
     S = {
-      lv, dl, t: 0, length, events, segs, theme: Themes.forLevel(lv), r2: rng(lv * 7919 + 11), mods, mix, boss,
+      lv, dl, t: 0, length, events, segs, theme: worldOf(lv), r2: rng(lv * 7919 + 11), mods, mix, boss,
       mines: [], ebullets: [],
       dist: 0, rdist: 0, homeY: 170 + Math.min(60, lv * 3) + (has('fast') ? 90 : 0), homeV: 30 + Math.min(30, lv * 1.2) + (has('fast') ? 25 : 0),
       squad: { x: 112, tx: 112, n: 5 + 2 * upgLv('squad'), weapon: 0, flash: 0 },
-      bullets: [], enemies: [], gates: [], crates: [], parts: [], texts: [], castle: null,
+      bullets: [], enemies: [], gates: [], crates: [], parts: [], texts: [], castle: null, ev: [], slowT: 0, clash: { n: 0, max: 0, cd: 0 },
       mortars: [], shells: [], planes: [], bombs: [], fx: [], banner: null,
       fireT: 0, fireFlash: 0, shake: 0, reviveUsed: false, lostTotal: 0, rT: 2, cT: 7,
       airT: upgLv('air') ? airEvery(upgLv('air')) * 0.6 : Infinity,
@@ -289,7 +299,11 @@
   function burst(x, y, c, n, sp) {
     for (let i = 0; i < n; i++) { const a = Math.random() * TAU, v = (0.3 + Math.random()) * sp; S.parts.push({ x, y, vx: Math.cos(a) * v, vy: Math.sin(a) * v, life: 1, c }); }
   }
-  function floatText(x, y, txt, c) { S.texts.push({ x, y, txt, c, life: 1 }); }
+  function floatText(x, y, txt, c, o) { S.texts.push(Object.assign({ x, y, txt, c, life: 1, max: 1 }, o)); }
+  // One-shot moments for the renderer (gate burst, army clash, boss phase...): drawing only, never read by the rules.
+  const fxEvent = (kind, x, y, o) => { S.ev.push(Object.assign({ kind, x, y, life: 0.5 }, o)); };
+  // Deterministic jitter (keeps the simulation's Math.random() sequence untouched).
+  const hash = (a, b) => frac(Math.sin(a * 12.9898 + b * 78.233) * 43758.5453);
   function banner(txt, sub, c) { S.banner = { txt, sub, c, life: 2.6 }; }
 
   function hitCastle(dmg, b) {
@@ -298,8 +312,14 @@
     // Tank armour: plain bullets only scratch it.
     if (C.type === 'tank' && b && !b.splash && !b.pierce) dmg *= 0.5;
     C.hp -= dmg; C.flash = 1;
+    // V3 phase change at half health (presentation only: the boss's attacks are unchanged, the balance stays).
+    if (!C.phase2 && C.hp > 0 && C.hp < C.max / 2) {
+      C.phase2 = true; S.shake = Math.max(S.shake, 10); Sfx.play('boss');
+      banner('⚡ ' + L('ENRAGED!', 'ÖFKELENDİ!'), L('Phase 2 — finish it!', '2. faz — bitir onu!'), '#ff5a5a');
+      fxEvent('phase', C.x, C.y);
+    }
     if (C.hp <= 0) {
-      C.dead = true; S.shake = 16; Sfx.play('boss');
+      C.dead = true; C.deadAt = performance.now(); S.shake = 16; Sfx.play('boss');
       for (let k = 0; k < 6; k++) S.fx.push({ x: C.x + (Math.random() - 0.5) * C.w, y: C.y + (Math.random() - 0.5) * 40, r: 70, life: 1, delay: k * 0.12, big: true });
       burst(C.x, C.y, '#ffd23f', 60, 200);
     }
@@ -648,8 +668,15 @@
         const before = q.n;
         q.n = g.mul ? q.n * 2 : Math.max(0, q.n + Math.floor(g.val));
         const d = q.n - before;
-        floatText(q.x, SQUAD_Y - 50, (d >= 0 ? '+' : '') + d, d >= 0 ? '#9dffc2' : '#ff8a95');
-        Sfx.play(d >= 0 ? 'card' : 'hit'); if (d < 0) { q.flash = 1; S.lostTotal -= d; }
+        floatText(q.x, SQUAD_Y - 50, (g.mul ? '×2  +' : d >= 0 ? '+' : '') + d, d >= 0 ? (g.mul ? '#ffd23f' : '#9dffc2') : '#ff8a95', { big: true, life: 1.3, max: 1.3 });
+        // V3: little numbers fly off the gate into the squad (one per soldier gained, capped), a flash at the gate.
+        if (d > 0) for (let k = 0, nk = Math.min(10, d); k < nk; k++) {
+          const hx = hash(g.id, k), hy = hash(k, g.id);
+          floatText(g.x + (hx - 0.5) * g.w * 0.9, g.y - 6, '+' + Math.max(1, Math.round(d / nk)), g.mul ? '#ffe066' : '#b9ffd6', { small: true, life: 0.75, max: 0.75, fx: q.x + (hx - 0.5) * 50, fy: SQUAD_Y - 10 + hy * 20, x0: g.x + (hx - 0.5) * g.w * 0.9, y0: g.y - 6 - hy * 30 });
+        }
+        fxEvent('gate', g.x, g.y, { d, mul: g.mul, w: g.w });
+        Sfx.play(g.mul ? 'mega' : d >= 0 ? 'card' : 'hit'); if (g.mul) { S.shake = Math.max(S.shake, 6); UI.vibrate(40); }
+        if (d < 0) { q.flash = 1; S.lostTotal -= d; }
       }
     }
     S.gates = S.gates.filter(g => !g.used && g.y < H + 40);
@@ -673,11 +700,20 @@
       if (e.y >= SQUAD_Y - 10 && Math.abs(e.x - q.x) < squadHalf() + e.r) {
         e.dead = true;
         if (e.kind === 'bomber') { S.fx.push({ x: e.x, y: e.y, r: 44, life: 1, delay: 0 }); Sfx.play('boom'); }
+        else { fxEvent('clash', e.x, SQUAD_Y - 8, { big: e.brute }); Sfx.play('clash'); }
         hurtSquad(contactLoss(e), q.x, SQUAD_Y);
       }
       if (e.y > H + 30) e.dead = true;
     }
     S.enemies = S.enemies.filter(e => !e.dead);
+    // V3 clash moment: when a big wave that reached the squad is wiped out to the last man, time slows for a beat.
+    { const cl = S.clash; let near = 0; cl.cd = Math.max(0, cl.cd - dt);
+      for (const e of S.enemies) if (e.y > SQUAD_Y - 230 && Math.abs(e.x - q.x) < 160) near++;
+      cl.max = Math.max(cl.max, near);
+      if (near === 0) { if (cl.max >= 10 && cl.n > 0 && cl.cd <= 0 && q.n > 0) { S.slowT = 0.6; cl.cd = 14; fxEvent('cleared', q.x, SQUAD_Y - 120); floatText(q.x, SQUAD_Y - 120, L('WAVE CRUSHED!', 'DALGA EZİLDİ!'), '#ffe066', { big: true, life: 1.4, max: 1.4 }); Sfx.play('slow'); } cl.max = 0; }
+      cl.n = near; }
+    for (const v of S.ev) v.life -= dt;
+    if (S.ev.length) S.ev = S.ev.filter(v => v.life > 0);
     // Enemy bullets.
     for (const b of S.ebullets) {
       b.x += b.vx * dt; b.y += b.vy * dt;
@@ -698,7 +734,11 @@
     S.parts = S.parts.filter(p => p.life > 0);
     for (const f of S.fx) { if (f.delay > 0) f.delay -= dt; else f.life -= dt * (f.big ? 0.9 : 1.5); }
     S.fx = S.fx.filter(f => f.life > 0);
-    for (const t of S.texts) { t.y -= 40 * dt; t.life -= dt; }
+    for (const t of S.texts) {
+      t.life -= dt;
+      if (t.fx != null) { const u = 1 - t.life / t.max, e2 = u * u; t.x = t.x0 + (t.fx - t.x0) * e2; t.y = t.y0 + (t.fy - t.y0) * e2 - Math.sin(u * Math.PI) * 40; }
+      else t.y -= (t.big ? 26 : 40) * dt;
+    }
     S.texts = S.texts.filter(t => t.life > 0);
 
     hud();
@@ -726,7 +766,7 @@
   // ---------- Screens ----------
   function hud() {
     const lv = S && mode !== 'menu' ? S.lv : G.level;
-    UI.html($('lvl'), L('Level ', 'Seviye ') + lv + '<small>' + Themes.forLevel(lv).name + '</small>');
+    UI.html($('lvl'), L('Level ', 'Seviye ') + lv + '<small>' + worldOf(lv).icon + ' ' + worldOf(lv).name + '</small>');
     UI.txt($('coins'), Kit.fmt(Save.data.coins));
     if (S && mode === 'play') {
       const w = WEAPONS[S.squad.weapon];
@@ -777,7 +817,7 @@
     UI.vibrate(80); Sfx.play('win');
     const stars = S.lostTotal === 0 ? 3 : S.squad.n >= 20 ? 2 : 1;
     pendingStars = stars + (lv % 10 === 0 ? 3 : 0);
-    setTimeout(() => panel(Kit.win({ title: { kale: L('CASTLE DOWN!', 'KALE DÜŞTÜ!'), dev: L('GIANT TOPPLED!', 'DEV DEVRİLDİ!'), tank: L('TANK WRECKED!', 'TANK HURDA!'), heli: L('GUNSHIP DOWN!', 'HELİKOPTER DÜŞTÜ!'), ejder: L('DRAKE SLAIN!', 'EJDER YENİLDİ!') }[S.boss], sub: L('Level ', 'Seviye ') + lv + ' · ' + S.squad.n + L(' soldiers · ', ' asker · ') + WEAPONS[S.squad.weapon].name, stars, reward: pendingReward, gems: pendingStars, ads: Kit.adsFor(G.level - 1) }), true), 900);
+    setTimeout(() => panel(Kit.win({ title: { kale: L('CASTLE DOWN!', 'KALE DÜŞTÜ!'), dev: L('GIANT TOPPLED!', 'DEV DEVRİLDİ!'), tank: L('TANK WRECKED!', 'TANK HURDA!'), heli: L('GUNSHIP DOWN!', 'HELİKOPTER DÜŞTÜ!'), ejder: L('DRAKE SLAIN!', 'EJDER YENİLDİ!') }[S.boss], sub: L('Level ', 'Seviye ') + lv + ' · ' + S.squad.n + L(' soldiers · ', ' asker · ') + WEAPONS[S.squad.weapon].name, stars, reward: pendingReward, gems: pendingStars, ads: Kit.adsFor(G.level - 1) }), true), 2400); // V3: time for the slow-motion fall, the victory run, the treasure and the gold rain
   }
   function lose() {
     mode = 'end';
@@ -878,10 +918,34 @@
   // Labels for both renderers. P maps world -> screen (projection in 3D, identity in 2D).
   function drawLabels(P, is3D) {
     const q = S.squad, sp = P(q.x, SQUAD_Y, is3D ? 80 : 0), sy = is3D ? sp.y : sp.y - 30, w = WEAPONS[q.weapon];
-    ctx.fillStyle = q.flash > 0 ? '#ff4757' : 'rgba(15,10,40,.85)'; rr(sp.x - 34, sy - 14, 68, 28, 14); ctx.fill();
+    // V3: the squad counter pops when the number changes (green swell when it grows, red shake when it drops).
+    const cs = S.cnt || (S.cnt = { n: q.n, pop: 0, dir: 0, en: 0, epop: 0 });
+    if (cs.n !== q.n) { cs.dir = q.n > cs.n ? 1 : -1; cs.pop = 1; cs.n = q.n; }
+    cs.pop = Math.max(0, cs.pop - 0.06);
+    const ck = 1 + cs.pop * (cs.dir > 0 ? 0.35 : 0.2), cj = cs.dir < 0 ? Math.sin(S.t * 90) * cs.pop * 3 : 0;
+    const over = !!(S.castle && S.castle.dead); // victory run: the army leaves its spot, its counters go
+    if (!over) {
+    ctx.save(); ctx.translate(sp.x + cj, sy); ctx.scale(ck, ck);
+    ctx.fillStyle = q.flash > 0 ? '#ff4757' : cs.pop > 0.3 && cs.dir > 0 ? '#1f7a44' : 'rgba(15,10,40,.85)'; rr(-34, -14, 68, 28, 14); ctx.fill();
     ctx.strokeStyle = skinColor(); ctx.lineWidth = 3; ctx.stroke();
-    outlined(String(q.n), sp.x, sy + 1, 18);
+    outlined(String(q.n), 0, 1, 18);
+    ctx.restore();
     outlined(w.icon, sp.x + 44, sy, 18);
+    // V3 clash counter: the enemy wave closing in gets its own red number over its middle, ticking down as it falls.
+    { let n = 0, mx = 0, my = 0;
+      for (const e of S.enemies) if (e.y > SQUAD_Y - 260 && e.y < SQUAD_Y && Math.abs(e.x - q.x) < 170) { n++; mx += e.x; my += e.y; }
+      if (cs.en !== n) { if (n < cs.en) cs.epop = 1; cs.en = n; }
+      cs.epop = Math.max(0, cs.epop - 0.08);
+      if (n >= 4) {
+        const ep = P(mx / n, my / n - 20, is3D ? 70 : 0), k = 1 + cs.epop * 0.3;
+        ctx.save(); ctx.translate(ep.x, is3D ? ep.y : ep.y - 30); ctx.scale(k, k);
+        ctx.fillStyle = 'rgba(90,0,16,.88)'; rr(-28, -13, 56, 26, 13); ctx.fill(); ctx.strokeStyle = '#ff4757'; ctx.lineWidth = 3; ctx.stroke();
+        outlined(String(n), 0, 1, 17, '#ffd0d5', '#4a000c');
+        ctx.restore();
+        // A crackle of "VS" sparks between the two counters while they are close.
+        if (Math.abs(ep.y - sy) < 170) { ctx.globalAlpha = 0.55 + 0.45 * Math.sin(S.t * 18); outlined('⚔', (ep.x + sp.x) / 2, (ep.y + sy) / 2, 18, '#ffe066'); ctx.globalAlpha = 1; }
+      } }
+    }
     for (const g of S.gates) {
       const p = P(g.x, g.y, is3D ? 36 : 0), good = g.mul || g.val >= 1, txt = g.mul ? 'x2' : (g.val >= 1 ? '+' : '') + Math.floor(g.val);
       // Neon halo behind the number (a wide soft stroke: no shadowBlur, which is slow on phones).
@@ -901,7 +965,7 @@
       ctx.fillStyle = '#ff4757'; rr(p.x - bw / 2 + 2, y - 5, (bw - 4) * Math.max(0, C.hp / C.max), 10, 5); ctx.fill();
       // Named boss bar across the top (under the HUD), with a trailing "recent damage" segment.
       if (is3D) {
-        const sa = UI.safeArea(), tw = Math.min(360, innerWidth - 40), tx = innerWidth / 2 - tw / 2, ty = sa.hudBottom + 22, f = Math.max(0, C.hp / C.max);
+        const sa = UI.safeArea(), tw = Math.min(360, innerWidth - 40), tx = innerWidth / 2 - tw / 2 + (C.flash > 0.5 ? Math.sin(S.t * 90) * 3 : 0), ty = sa.hudBottom + 22, f = Math.max(0, C.hp / C.max);
         C.lag = C.lag == null ? f : Math.max(f, C.lag - 0.004);
         const intro = Math.min(1, C.t / 0.8);
         ctx.globalAlpha = intro;
@@ -921,9 +985,39 @@
       for (const p0 of S.parts) { ctx.globalAlpha = Math.max(0, p0.life); ctx.fillStyle = p0.c; ctx.fillRect(p0.x - 3, p0.y - 3, 6, 6); }
       ctx.globalAlpha = 1;
     }
-    for (const t of S.texts) { const p = P(t.x, t.y, 30); ctx.globalAlpha = Math.min(1, t.life * 2); outlined(t.txt, p.x, p.y, 20, t.c); }
+    for (const t of S.texts) {
+      const p = P(t.x, t.y, 30), u = 1 - t.life / (t.max || 1);
+      ctx.globalAlpha = Math.min(1, t.life * 2.5);
+      // Big numbers punch in (overshoot), small flyers shrink into the squad.
+      const size = t.big ? 34 * (u < 0.15 ? 0.6 + u / 0.15 * 0.7 : u < 0.3 ? 1.3 - (u - 0.15) / 0.15 * 0.3 : 1) : t.small ? 15 * (1 - u * 0.5) : 20;
+      outlined(t.txt, p.x, p.y, size, t.c);
+    }
     ctx.globalAlpha = 1;
     const bx = is3D ? innerWidth / 2 : MID, by = is3D ? P(MID, 300, 0).y : 300;
+    if (is3D) {
+      const vw = innerWidth, vh = innerHeight;
+      // V3 boss entrance: cinema bars slide in for ~2.4 s while the camera pushes in on the boss.
+      if (C && !C.dead && C.t < 2.6) {
+        const a = Math.min(1, C.t / 0.3, (2.6 - C.t) / 0.4), bh = vh * 0.085 * a;
+        ctx.fillStyle = '#000'; ctx.fillRect(0, 0, vw, bh); ctx.fillRect(0, vh - bh, vw, bh);
+        ctx.globalAlpha = a; const sl = Math.min(1, C.t / 0.45);
+        ctx.fillStyle = 'rgba(160,10,30,.75)'; ctx.beginPath(); ctx.moveTo(vw * (1 - sl), vh * 0.6); ctx.lineTo(vw, vh * 0.6 - 18); ctx.lineTo(vw, vh * 0.6 + 40); ctx.lineTo(vw * (1 - sl) - 30, vh * 0.6 + 58); ctx.fill();
+        outlined(L('BOSS', 'BOSS'), vw - 70 * sl, vh * 0.6 + 20, 26, '#ffe066', '#3a0010');
+        ctx.globalAlpha = 1;
+      }
+      // Final blow: a white flash, then a warm fade while the boss goes down in slow motion.
+      if (C && C.dead && C.deadAt) {
+        const t = (performance.now() - C.deadAt) / 1000;
+        if (t < 0.5) { ctx.fillStyle = 'rgba(255,255,255,' + (0.7 * (1 - t / 0.5)).toFixed(3) + ')'; ctx.fillRect(0, 0, vw, vh); }
+        if (t > 0.2 && t < 2.2) { ctx.globalAlpha = Math.min(1, (t - 0.2) * 3, (2.2 - t) * 2); outlined(L('VICTORY!', 'ZAFER!'), vw / 2, vh * 0.3, 46, '#ffe066', '#5a2a00'); ctx.globalAlpha = 1; }
+      }
+      // Slow motion: a soft dark vignette with a cool edge.
+      if (S.slowT > 0) {
+        const g = ctx.createRadialGradient(vw / 2, vh / 2, vh * 0.25, vw / 2, vh / 2, vh * 0.75);
+        g.addColorStop(0, 'rgba(0,0,0,0)'); g.addColorStop(1, 'rgba(10,20,60,' + (0.55 * Math.min(1, S.slowT * 4)).toFixed(3) + ')');
+        ctx.fillStyle = g; ctx.fillRect(0, 0, vw, vh);
+      }
+    }
     if (S.banner) {
       const b = S.banner, a = Math.min(1, b.life * 2, (2.6 - b.life) * 5);
       ctx.globalAlpha = a;
@@ -944,7 +1038,7 @@
     ctx.fillStyle = '#141338'; ctx.fillRect(0, 0, cvs.width, cvs.height);
     const sh = S && S.shake ? S.shake : 0;
     ctx.setTransform(dpr * sc, 0, 0, dpr * sc, dpr * (ox + (Math.random() - 0.5) * sh), dpr * (oy + (Math.random() - 0.5) * sh));
-    const tf = (S ? S.theme : Themes.forLevel(G.level)).field;
+    const tf = (S ? S.theme : worldOf(G.level)).field;
     ctx.fillStyle = tf[1]; rr(ROAD_L - 6, 0, ROAD_R - ROAD_L + 12, H, 14); ctx.fill();
     if (!S) return;
     // Lane tiles follow the road position so layout changes scroll in with the road.
@@ -999,15 +1093,21 @@
   }
 
   // ---------- Loop ----------
+  const rinfo = () => ({ skin: skinColor(), gear: G.skin, formation: formation(S.squad.n), weapon: WEAPONS[S.squad.weapon], layoutAt, playing: mode === 'play' && !paused });
+  // Test hook: draw n frames of dt seconds right now (screenshots of timed moments on a slow headless GPU).
+  window.__suru.frames = (n, dt) => { for (let i = 0; i < n; i++) { if (mode === 'play' && !paused) update(dt); if (R3 && S) R3.render(S, dt, rinfo()); } if (R3 && S) drawOverlay3D(); };
   let last = performance.now();
   function loop(t) {
     requestAnimationFrame(loop);
     if (t - last < 7) return; // follow the screen (up to 120 Hz): 60 fps looked choppy on 120 Hz phones
     const dt = Math.min(0.05, (t - last) / 1000);
     last = t;
-    if (mode === 'play' && !paused) update(dt);
+    // V3 slow motion (wave crushed): the game and its drawing run at a third of the speed for a moment (real time).
+    let ts = 1;
+    if (S && S.slowT > 0) { ts = 0.32; if (mode === 'play' && !paused) S.slowT -= dt; }
+    if (mode === 'play' && !paused) update(dt * ts);
     if (R3 && S) {
-      R3.render(S, dt, { skin: skinColor(), gear: G.skin, formation: formation(S.squad.n), weapon: WEAPONS[S.squad.weapon], layoutAt, playing: mode === 'play' && !paused });
+      R3.render(S, dt * ts, rinfo());
       drawOverlay3D();
     } else draw2D();
   }
