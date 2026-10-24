@@ -53,6 +53,9 @@
       const hemi = new T.HemisphereLight(0xffffff, 0x6a7a60, 1.9); scene.add(hemi);
       const sun = new T.DirectionalLight(0xfff2dd, 2.2); sun.position.set(-300, 600, 400); scene.add(sun);
       scene.fog = new T.Fog(0xbfe6ff, 1800, 4200);
+      // V3: the shared GPU effect system (ortak/fx3d.js) for swallow sparkles, growth rings and rival take-downs.
+      const F3 = window.Fx3D ? Fx3D.create(scene, { unit: 6, particles: 900, rocks: 40, decals: 8, bolts: 2, budget: 260 }) : null;
+      let lastR = 0, lastTier = 0;
 
       const tex = (w, h, draw, rep) => {
         const c = document.createElement('canvas'); c.width = w; c.height = h; draw(c.getContext('2d'), w, h);
@@ -166,7 +169,9 @@
         p.s.material.color.set(color); p.s.position.set(x, y, z); p.life = p.max = 0.35; p.size = size; p.s.visible = true;
       }
       function writeObj(o, dirty) {
-        if (o.state === 1 && !o._popped) { o._popped = 1; const hc = (level && level.me && level.me.c) || '#ffffff'; pop(o.x, (o.vh || o.h || 10) * 0.6, o.y, hc, Math.max(14, o.s * 3)); }
+        if (o.state === 1 && !o._popped) { o._popped = 1; const hc = (level && level.me && level.me.c) || '#ffffff'; pop(o.x, (o.vh || o.h || 10) * 0.6, o.y, hc, Math.max(14, o.s * 3));
+          // V3: sparkles spiral out of the rim; big props also throw a star flare and a few chips.
+          if (F3) { const k = Math.min(3, 0.6 + o.s / 10); F3.ring(o.x, 3, o.y, hc, 1.2 * k, Math.round(8 + 6 * k), '#ffffff'); if (o.s > 12) { F3.star(o.x, (o.vh || o.h || 10) * 0.5, o.y, '#fff3b0', 4 * k, 0.3); F3.chips(o.x, o.y, 3, '#8a8a90', k * 0.6); } } }
         if (shadows && o.si != null) { shadows.setMatrixAt(o.si, shadowMatrix(o)); shadows.instanceMatrix.needsUpdate = true; }
         const it = inst[o.ik || o.m || o.type];
         if (!it) return;
@@ -266,7 +271,7 @@
       const R = {
         thumb,
         is3D: true,
-        setLevel(S) {
+        setLevel(S) { lastR = 0; lastTier = 0; if (F3) F3.clear();
           clearWorld();
           level = S;
           const th = S.map;
@@ -373,6 +378,15 @@
               if (it.swirl) { it.swirl.rotation.z = -time * 0.5; it.swirl.position.y = -Math.max(0.6, r * 0.25); it.swirl.scale.setScalar(1); }
               it.rim.material.color.set(h.frozen > 0 ? '#bfefff' : '#ffffff');
             } else it.rim.material.color.copy(h.frozen > 0 ? tmpColor.set('#bfefff') : h.inv > 0 && Math.floor(h.inv * 8) % 2 ? tmpColor.set('#ffffff') : rimColor(h, time));
+          }
+          // V3 growth: every few sizes the player's hole flashes a ring of light, a rising helix and a coin glint shower;
+          // a rival that gets swallowed goes out in a burst of its own colour.
+          if (F3) {
+            const me = S.me, tier = Math.floor(me.r / 12);
+            if (me.r > 0 && tier > lastTier && lastR > 0) { F3.ring(me.x, 3, me.y, '#ffe066', me.r / 5, 40, '#ffffff'); F3.spiral(me.x, me.y, me.c || '#7dd3fc', me.r / 7, me.r / 4, 30, '#ffffff'); F3.coins(me.x, 6, me.y, 16, me.r / 8); }
+            lastTier = tier; lastR = me.r;
+            for (const it of holes) { const h = it.h; if (h !== me && h.dead > 0 && !it.boomed) { it.boomed = true; F3.explosion(h.x, 8, h.y, Math.max(8, h.r * 0.4), { color: h.c || '#ff7a1a', rocks: 8, scorch: false, shake: 0 }); F3.ring(h.x, 4, h.y, h.c || '#ffffff', h.r / 5, 36, '#ffffff'); } else if (!(h.dead > 0)) it.boomed = false; }
+            F3.update(dt);
           }
           for (const p of pops) if (p.life > 0) { p.life -= dt; const t = 1 - p.life / p.max; p.s.scale.setScalar(p.size * (0.5 + t)); p.s.material.opacity = Math.max(0, 1 - t); if (p.life <= 0) p.s.visible = false; }
           for (const it of holes) if (it.glow) it.glow.material.opacity = 0.4 + 0.15 * Math.sin(time * 3 + it.h.x);

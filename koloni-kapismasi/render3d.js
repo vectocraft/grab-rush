@@ -30,6 +30,8 @@
       if ('outputColorSpace' in renderer) renderer.outputColorSpace = T.SRGBColorSpace;
 
       const scene = new T.Scene();
+      // V3: the shared GPU effect system (ortak/fx3d.js) for the capture moment of a region.
+      const F3 = window.Fx3D ? Fx3D.create(scene, { unit: 4, particles: 700, rocks: 30, decals: 4, bolts: 2, budget: 220 }) : null;
       const camera = new T.PerspectiveCamera(36, 1, 10, 4000);
       scene.add(new T.HemisphereLight(0xffffff, 0x9aa0d0, 1.05));
       const sun = new T.DirectionalLight(0xfff0d8, 2.9);
@@ -377,6 +379,8 @@
             const tile = level.tiles[i], tw = level.towers[i];
             if (!tile) return;
             const p = level.palFn(n.owner);
+            // V3 capture: a ring of sparks in the new owner's colour, a rising helix and a star over the tower.
+            if (tile.cap !== n.owner) { if (F3 && tile.cap != null && n.owner) { const x = n.x - cx, z = n.y - cy, c = p.base; F3.ring(x, 10, z, c, (n.r || 20) / 6, 30, '#ffffff'); F3.spiral(x, z, c, (n.r || 20) / 8, 10, 22, '#ffffff'); F3.star(x, 30, z, n.owner === 1 ? '#fff3b0' : c, 7, 0.4); if (n.owner === 1) F3.coins(x, 20, z, 10, 3); } tile.cap = n.owner; }
             if (tile.owner !== n.owner) {
               tile.owner = n.owner;
               tile.mat.color.set(n.owner === 0 ? level.theme.land : hexMix(p.base, '#ffffff', 0.1));
@@ -445,6 +449,7 @@
           chevrons.instanceMatrix.needsUpdate = true; rings.instanceMatrix.needsUpdate = true;
           if (chevrons.instanceColor) chevrons.instanceColor.needsUpdate = true;
           if (rings.instanceColor) rings.instanceColor.needsUpdate = true;
+          if (F3) F3.update(dt);
           // Camera shake.
           camera.position.copy(camBase);
           if (S.shake) camera.position.add(v3.set((Math.random() - 0.5) * S.shake, 0, (Math.random() - 0.5) * S.shake));

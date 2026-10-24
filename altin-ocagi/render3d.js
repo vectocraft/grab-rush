@@ -28,6 +28,9 @@
       if ('outputColorSpace' in renderer) renderer.outputColorSpace = T.SRGBColorSpace;
 
       const scene = new T.Scene();
+      // V3: the shared GPU effect system (ortak/fx3d.js): ore sparks off every pickaxe hit, a coin burst at the bank.
+      const F3 = window.Fx3D ? Fx3D.create(scene, { unit: 3, particles: 600, rocks: 40, decals: 2, bolts: 2, budget: 160 }) : null;
+      let fxLast = 0, carOut = true;
       scene.background = new T.Color('#6ec3ff');
       // Grey detail textures (the theme colour tints them): soil with pebbles and strata, cracked rock, wood grain.
       const detail = (draw, rep) => { const c = document.createElement('canvas'); c.width = c.height = 128; draw(c.getContext('2d')); const t = new T.CanvasTexture(c); if ('colorSpace' in t) t.colorSpace = T.SRGBColorSpace; t.wrapS = t.wrapT = T.RepeatWrapping; t.repeat.set(rep, rep); t.anisotropy = 4; return t; };
@@ -351,6 +354,9 @@
           world.car.g.rotation.y = out ? 0 : Math.PI;
           world.car.load.visible = out && st.transLoad > 0;
           world.car.spin.forEach(w => { w.rotation.z -= (st.transOn ? 0.25 : 0); });
+          // The car reaches the bank and turns back: a shower of coins over it.
+          if (F3 && carOut && !out && st.transOn) { const cp = world.car.g.position; F3.coins(cp.x, cp.y + 14, cp.z + 10, 14, 4); F3.star(cp.x, cp.y + 20, cp.z + 10, '#ffd23f', 6, 0.3); }
+          carOut = out;
           world.depoPile.visible = st.depo > 0.5;
           // Lantern flicker and ore twinkle.
           const tt = performance.now() / 1000;
@@ -366,9 +372,12 @@
               m.g.position.set(X(mp.x), Yw(t1) + (mp.bob || 0), -30 + k * 6);
               m.g.rotation.y = mp.dir > 0 ? 0.35 : Math.PI - 0.35;
               m.pick.rotation.z = mp.swing != null ? -0.9 + mp.swing * 1.8 : 0.4;
+              // Pickaxe strike (the swing passes its low point): ore-coloured sparks and a chip or two off the rock face.
+              if (F3 && mp.swing != null) { const low = mp.swing < 0.25; if (low && !m.struck) { const ox = X(mp.x) + (mp.dir > 0 ? 9 : -9), oy = Yw(t1) + 4, oc = st.ores[i] || '#ffd23f'; for (let q = 0; q < 6; q++) F3.emit(ox, oy, -24 + k * 6, (Math.random() - 0.5) * 40, Math.random() * 30 + 10, 6, 0.35, 1.2, 0.3, q % 2 ? oc : '#fff3b0', 1, 60, 2, 0.02, 2); } m.struck = low; }
               m.ore.visible = mp.carrying;
             });
           });
+          if (F3) { const now = performance.now() / 1000, dt = fxLast ? Math.min(0.05, now - fxLast) : 0.016; fxLast = now; F3.update(dt); }
           autoQ(); renderer.render(scene, camera);
         },
       };

@@ -432,9 +432,17 @@
         c.pts.geometry.attributes.position.needsUpdate = true; c.pts.geometry.attributes.color.needsUpdate = true;
       }
       const rr = (a, b) => a + Math.random() * (b - a);
+      // V3: the shared GPU effect system (ortak/fx3d.js) on top: flashes, spark rings, flying stone chips, star flares.
+      const F3 = window.Fx3D ? Fx3D.create(scene, { unit: 7, particles: 900, rocks: 60, decals: 6, bolts: 4, budget: 260 }) : null;
       // A burst of the right kind where something lands: dust and stones, splinters, fire and smoke, energy sparks.
       function impact(kind, x, z, big) {
         const n = big ? 2 : 1;
+        if (F3) {
+          if (kind === 'stone' || kind === 'boulder') F3.impact(x, 6, z, '#e8c890', 0.9 * n, 6 * n, '#7a6a52');
+          else if (kind === 'laser' || kind === 'plasma') { F3.impact(x, 10, z, kind === 'plasma' ? '#c79bff' : '#7df9ff', 0.8 * n, 0); F3.ring(x, 8, z, kind === 'plasma' ? '#c79bff' : '#7df9ff', 1.4 * n, 14); }
+          else if (kind === 'bolt' || kind === 'arrow' || kind === 'javelin' || kind === 'bullet') F3.impact(x, 10, z, '#ffe2a8', 0.45, 0);
+          else { F3.explosion(x, 8, z, big ? 26 : 16, { n: big ? 18 : 10, rocks: big ? 8 : 4, scorch: false, shake: 0, rockCol: '#4a3a2a' }); F3.ring(x, 4, z, '#ffb040', big ? 4 : 2.6, big ? 28 : 16, '#ffffff'); }
+        }
         if (kind === 'stone' || kind === 'boulder') { for (let k = 0; k < 14 * n; k++) emit(smoke, x + rr(-6, 6), rr(2, 8), z + rr(-6, 6), rr(-20, 20), rr(10, 30), rr(-20, 20), rr(0.6, 1.2), '#a08a6a'); for (let k = 0; k < 10 * n; k++) emit(sparks, x, 4, z, rr(-40, 40), rr(30, 70), rr(-40, 40), rr(0.4, 0.8), '#c9b08a', 160); }
         else if (kind === 'bolt' || kind === 'arrow' || kind === 'javelin') { for (let k = 0; k < 8; k++) emit(sparks, x, 10, z, rr(-30, 30), rr(10, 40), rr(-30, 30), rr(0.2, 0.4), '#ffe2a8', 120); }
         else if (kind === 'laser' || kind === 'plasma') { for (let k = 0; k < (kind === 'plasma' ? 30 : 12); k++) emit(sparks, x, 10, z, rr(-60, 60), rr(-10, 60), rr(-60, 60), rr(0.25, 0.6), kind === 'plasma' ? (k % 2 ? '#c79bff' : '#ffffff') : '#7df9ff', 40); }
@@ -629,9 +637,13 @@
             const sd = S.side[s];
             if (baseAge[s] !== sd.age) {
               if (bases[s]) root.remove(bases[s]);
+              const evolved = baseAge[s] >= 0 && sd.age > baseAge[s];
               bases[s] = base(sd.age, s, info.team[s]); bases[s].position.z = BASE_Z[s]; root.add(bases[s]); baseAge[s] = sd.age;
+              if (F3 && evolved) { const bz = BASE_Z[s], c = info.team[s].c; F3.spiral(0, bz, c, 6, 22, 50, '#ffffff'); F3.ring(0, 4, bz, '#ffd23f', 8, 50, c); F3.star(0, 60, bz, '#fff3b0', 18, 0.6); F3.confetti(0, 40, bz, 40, 8); }
             }
             if (bases[s].userData.cloth) bases[s].userData.cloth.rotation.y = Math.sin(time * 3 + s) * 0.3;
+            // V3: a falling base goes up in a chain of blasts; an age-up (evolve) is celebrated with a pillar of light.
+            if (F3 && sd.hp <= 0 && !bases[s].userData.fell) { bases[s].userData.fell = true; const bz = BASE_Z[s]; for (let k = 0; k < 4; k++) F3.explosion(rr(-40, 40), rr(20, 60), bz + rr(-20, 20), rr(22, 34), { n: 20, rocks: 10, scorch: false, shake: 0, rockCol: '#4a3a2a' }); F3.ring(0, 6, bz, '#ffd23f', 9, 60, '#ffffff'); F3.star(0, 50, bz, '#ffffff', 20, 0.6); }
             const hurt = 1 - Math.max(0, sd.hp / sd.max);
             bases[s].position.x = hurt > 0.7 ? Math.sin(time * 40) * 0.6 : 0;
             sd.slots.forEach((d, i) => {
@@ -683,7 +695,8 @@
             if (m.aura) { m.aura.material.opacity = 0.45 + 0.25 * Math.sin(time * 4 + u.p * 0.03); m.aura.rotation.z = time; }
           }
           if (S.powerT > 0) powerMat.opacity = 0.55 + 0.35 * Math.sin(time * 9);
-          for (const [u, m] of unitM) if (!seen.has(u)) { root.remove(m.g); unitM.delete(u); }
+          // V3: a fallen unit leaves a puff of team-coloured sparks and a little star where it stood.
+          for (const [u, m] of unitM) if (!seen.has(u)) { if (F3 && u.hp <= 0) { const p = m.g.position, c = info.team[u.side].c; F3.ring(p.x, 6, p.z, c, u.type === 2 ? 1.6 : 0.9, u.type === 2 ? 18 : 10, '#ffffff'); F3.star(p.x, 12, p.z, c, u.type === 2 ? 5 : 3, 0.25); } root.remove(m.g); unitM.delete(u); }
           // Projectiles.
           const seenS = new Set();
           for (const sh of S.shots) {
@@ -755,7 +768,7 @@
             } else if (m.userData.boom) { const b = m.userData.boom; b.visible = f.kind === 'boomAt'; const u = 1 - f.t / 0.35, s2 = 18 * (0.4 + u); b.scale.setScalar(s2); b.position.y = s2 * 0.5; b.position.x = 0; b.material.opacity = Math.max(0, 1 - u); }
           }
           for (const [f, m] of fxM) if (!seenF.has(f)) { root.remove(m); fxM.delete(f); }
-          stepCloud(sparks, dt); stepCloud(smoke, dt);
+          stepCloud(sparks, dt); stepCloud(smoke, dt); if (F3) F3.update(dt);
           for (let i = scorches.length - 1; i >= 0; i--) { const o = scorches[i]; o.life -= dt; o.m.material.opacity = Math.min(1, o.life / 2); if (o.life <= 0) { root.remove(o.m); /* material kept: shader stays compiled */ scorches.splice(i, 1); } }
           camera.position.copy(camBase);
           if (S.shake) camera.position.add(v3.set((Math.random() - 0.5) * S.shake * 2, (Math.random() - 0.5) * S.shake * 2, 0));
