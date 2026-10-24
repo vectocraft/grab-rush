@@ -284,6 +284,11 @@
       // Ambient particles per theme: colour, size, vertical speed, sideways sway, blink.
       const AMB = { dust: ['#ffe2b0', 0.22, 0.25, 0.1, 0], bubbles: ['#9fe6ff', 0.3, 1.1, 0.25, 0], wisps: ['#c28cff', 0.6, 0.15, 0.6, 0.5], embers: ['#ff8a2a', 0.28, 1.6, 0.4, 0.3], snow: ['#ffffff', 0.3, -1.2, 0.5, 0], fireflies: ['#b6ff6a', 0.35, 0.1, 0.8, 1] };
       let amb = AMB.dust, pools = [];
+      // V3 weather per chapter ambience (on top of the floating dust points): [kind, rate] pairs for Fx3D.weather.
+      const WX = { snow: [['snow', 26]], embers: [['embers', 14], ['ash', 10]], fireflies: [['leaves', 7], ['fireflies', 6]], wisps: [['fireflies', 5]], bubbles: [['motes', 4]] };
+      let wx = null;
+      // Soft, patchy mist (tileable blobs), cloned per room so each sheet scrolls on its own.
+      const mistTex = canvasTex(128, 128, g => { for (let k = 0; k < 26; k++) { const x = Math.random() * 128, y = Math.random() * 128, r = 14 + Math.random() * 30; for (const ox of [-128, 0, 128]) for (const oy of [-128, 0, 128]) { const gr = g.createRadialGradient(x + ox, y + oy, 0, x + ox, y + oy, r); gr.addColorStop(0, 'rgba(255,255,255,.35)'); gr.addColorStop(1, 'rgba(255,255,255,0)'); g.fillStyle = gr; g.fillRect(x + ox - r, y + oy - r, 2 * r, 2 * r); } } });
       const room = new T.Group(); scene.add(room);
       const dyn = new T.Group(); scene.add(dyn);
       // Shared effect system (ortak/fx3d.js): GPU sparks, bow flashes, arrow light trails, stone chips, floor cracks,
@@ -295,7 +300,7 @@
       const bossPool = new T.Mesh(new T.PlaneGeometry(1, 1).rotateX(-Math.PI / 2), new T.MeshBasicMaterial({ map: glowTex, color: '#ff2a5a', transparent: true, depthWrite: false, blending: T.AdditiveBlending, opacity: 0.5 }));
       const bossBeam = new T.Mesh(new T.CylinderGeometry(1, 1.6, 16, 20, 1, true).translate(0, 8, 0), new T.MeshBasicMaterial({ map: beamTex, color: '#b04dff', transparent: true, depthWrite: false, blending: T.AdditiveBlending, side: T.DoubleSide, opacity: 0.5 }));
       bossPool.visible = bossBeam.visible = false; bossPool.renderOrder = 3; scene.add(bossPool, bossBeam);
-      let perfAcc = 0, perfN = 0, slowShadows = false, shadowTick = 0;
+      let perfAcc = 0, perfN = 0, slowShadows = false, shadowTick = 0, lowFxA = false;
       let level = null, menuKey = '', door = null, portal = null, doorArrow = null, chevrons = [], angelG = null, chestG = null, spikesM = [], flames = [], heroRing = null;
       const ents = new Map();
 
@@ -547,6 +552,12 @@
       flashEl.style.cssText = 'position:fixed;inset:0;pointer-events:none;z-index:3;opacity:0;mix-blend-mode:screen;transition:opacity .18s ease-out';
       document.body.appendChild(flashEl);
       function screenFlash(color, a) { flashEl.style.transition = 'none'; flashEl.style.background = 'radial-gradient(circle, ' + color + ', transparent 75%)'; flashEl.style.opacity = a; void flashEl.offsetWidth; flashEl.style.transition = 'opacity .35s ease-out'; flashEl.style.opacity = 0; }
+      // V3: a red edge vignette when the hero is hit (and a slow pulse while health is low). Normal blending, so the
+      // red reads even on a bright floor; only its opacity changes per frame (no repaint of the gradient).
+      const hurtEl = document.createElement('div');
+      hurtEl.style.cssText = 'position:fixed;inset:0;pointer-events:none;z-index:3;opacity:0;background:radial-gradient(ellipse at center, transparent 48%, rgba(255,20,40,.55) 85%, rgba(160,0,20,.85) 100%)';
+      document.body.appendChild(hurtEl);
+      let hurtA = 0, lastHp = -1, hitSh = 0, doorFx = false, doorT = 0, fogSheets = [];
       let punch = 0;
       const BASE_FOV = 46;
       const auraG = new T.Mesh(new T.RingGeometry(1.25, 1.6, 6, 1).rotateX(-Math.PI / 2), new T.MeshBasicMaterial(Object.assign({ color: '#3b8cff', side: T.DoubleSide }, add))); auraG.visible = false; scene.add(auraG);
@@ -694,6 +705,42 @@
         if (rg.look === 'mushking' && Math.random() < dt * 6) emit(puffs, e.x + rnd(-1.5, 1.5), rnd(0.5, rg.hy), e.z + rnd(-1.5, 1.5), 0, 0.6, 0, 1.2, '#4a8a2a');
         if (rg.look === 'glubx' && F3 && Math.random() < dt * 10) F3.mote(e.x + rnd(-1.5, 1.5), 0.3, e.z + rnd(-1.5, 1.5), '#7fe8ff', 0.25, 1.4, 1.6);
       }
+      // ---------- V3: elite marks and per-species deaths ----------
+      // Elites wear a spinning golden crown over the head and a golden rune ring at the feet (pooled, built once).
+      const eliteCrowns = pool(() => { const g = topPiece('crown'); g.scale.setScalar(2.4); return g; });
+      const eliteRunes = pool(() => { const m = new T.Mesh(new T.PlaneGeometry(1, 1).rotateX(-Math.PI / 2), new T.MeshBasicMaterial(Object.assign({ map: F3 ? Fx3D.tex.rune() : glowTex, color: '#ffc83a', opacity: 0.85 }, add))); m.renderOrder = 2; return m; });
+      // Death styles by species: skeletons fall apart into bones, slimes burst in a splash of goo, casters and
+      // spirits evaporate into a rising violet mist, demons and dragons burst into embers.
+      const DEATH = {};
+      ['minion', 'warrior', 'archer', 'orcskull'].forEach(k => { DEATH[k] = ['bone', '#efe6d2']; });
+      [['greenblob', '#7dff4a'], ['pinkblob', '#ff7ad8'], ['spikyblob', '#b6ff4a'], ['glub', '#4ad8ff'], ['glubx', '#4ad8ff'], ['frog', '#6fe04a'], ['squidle', '#c77dff'], ['fishb', '#4ab0ff'], ['fish', '#4ab0ff'], ['mushnub', '#ff8a6a']].forEach(([k, c]) => { DEATH[k] = ['slime', c]; });
+      [['necro', '#b36bff'], ['wizardb', '#6a8cff'], ['ghost', '#bfe8ff'], ['ghostskull', '#9fffe0'], ['bluedemon', '#5aa8ff'], ['alien', '#7dff9a']].forEach(([k, c]) => { DEATH[k] = ['mist', c]; });
+      [['demon', '#ff5a1a'], ['demonf', '#ff7a2a'], ['dragon', '#ff9a3a'], ['dragonx', '#ff5a1a'], ['cactoro', '#ffb040']].forEach(([k, c]) => { DEATH[k] = ['ember', c]; });
+      function speciesDeath(e) {
+        const d = DEATH[e.kind], x = e.x, z = e.z, s = e.scale || 1;
+        if (!d || !F3) return;
+        const [st, c] = d;
+        if (st === 'bone') {
+          // Bones clatter apart: pale chips tumble out, a puff of grave dust, a skull-white flash.
+          F3.chips(x, z, 12, '#e8dcc0', 1.3 * s); F3.star(x, 1.6 * s, z, '#fff6e0', 4, 0.25);
+          for (let k = 0; k < 8; k++) emit(puffs, x + rnd(-0.7, 0.7), 0.5, z + rnd(-0.7, 0.7), rnd(-1.5, 1.5), rnd(0.4, 1.2), rnd(-1.5, 1.5), rnd(0.6, 0.9), '#b8ad98');
+        } else if (st === 'slime') {
+          // Goo splash: droplets arc out and fall, a wet ring and a dark splat on the floor.
+          for (let k = 0; k < 26; k++) { const a = Math.random() * 6.28, v = rnd(3, 9); F3.emit(x, 0.8 * s, z, Math.sin(a) * v, rnd(4, 10), Math.cos(a) * v, rnd(0.5, 0.9), 0.55 * s, 0.2, k % 3 ? c : '#ffffff', 1, 22, 1.2, 0, 0); }
+          F3.ring(x, 0.3, z, c, 2.2 * s, 22, '#ffffff'); F3.crack(x, z, 2.4 * s, 3, 1, 0.55); ring(x, z, c, 4 * s, 0.4);
+        } else if (st === 'mist') {
+          // Evaporates: a rising violet helix, motes drifting up and a soft glow where it stood.
+          F3.spiral(x, z, c, 0.9 * s, 6, 26, '#ffffff'); F3.star(x, 1.8 * s, z, c, 5, 0.4); flare(x, 1.5, z, c, 6, 0.5);
+          for (let k = 0; k < 14; k++) F3.mote(x + rnd(-0.8, 0.8), rnd(0.4, 2.4) * s, z + rnd(-0.8, 0.8), k % 2 ? c : '#ffffff', 0.35, rnd(1, 1.8), rnd(1.5, 3));
+          for (let k = 0; k < 5; k++) emit(puffs, x + rnd(-0.5, 0.5), rnd(0.6, 2), z + rnd(-0.5, 0.5), 0, rnd(1, 2), 0, 0.9, c);
+        } else {
+          // Embers: a fiery burst, sparks thrown high and a scorch mark.
+          for (let k = 0; k < 30; k++) { const a = Math.random() * 6.28, v = rnd(2, 8); emit(flamesC, x, 1 * s, z, Math.sin(a) * v, rnd(3, 9), Math.cos(a) * v, rnd(0.35, 0.7), k % 2 ? c : '#ffd23f', -3); }
+          F3.crack(x, z, 2.6 * s, 3, 1, 0.7); F3.ring(x, 0.5, z, c, 2.4 * s, 24, '#ffd23f');
+        }
+        if (e.elite) { F3.coins(x, 1.2, z, 18, 3); F3.star(x, 2.4, z, '#ffd23f', 9, 0.45); ring(x, z, '#ffd23f', 7, 0.6); }
+      }
+
       function fx(kind, x, z, color, n) {
         n = n || 10; color = color || '#ffe9a8';
         if (kind === 'hit') { for (let k = 0; k < n * 2; k++) emit(sparks, x, 1.4, z, rnd(-7, 7), rnd(1, 8), rnd(-7, 7), rnd(0.2, 0.5), color, 14); flare(x, 1.4, z, color, 3.8, 0.18); if (F3) { F3.impact(x, 1.4, z, color, n > 10 ? 1.4 : 1, n > 10 ? 4 : 2, rockCol); if (n > 10) F3.ring(x, 1.2, z, color, 1.4, 14); } }
@@ -972,6 +1019,20 @@
         const pool = new T.Mesh(new T.PlaneGeometry(7, 7).rotateX(-Math.PI / 2), new T.MeshBasicMaterial(Object.assign({ map: heroPoolTex, color: '#ffe2b0', opacity: 0.32 }, add)));
         pool.position.y = 0.06; heroRing.userData.pool = pool; room.add(pool);
         makeDust(); setAmb(th.fx);
+        // V3 atmosphere: warm pools of light on the floor under every torch, two slow sheets of low mist in the room's
+        // colour, and the chapter's weather (falling snow, ash and embers, drifting leaves) over the play area.
+        { const lp = new T.MeshBasicMaterial(Object.assign({ map: glowTex, color: ch.light || '#ffd9a8', opacity: 0.32 }, add));
+          const spots = [[-8, -RH + 2.2, 7], [8, -RH + 2.2, 7], [0, -RH + 2, 6]];
+          for (const z of [-12, -4, 4, 12]) for (const sx of [-1, 1]) spots.push([sx * (RW - 1.6), z + 1.2, 6.5]);
+          for (const [x, z, r] of spots) { const m = new T.Mesh(new T.PlaneGeometry(r, r).rotateX(-Math.PI / 2), lp); m.position.set(x, 0.04, z); m.renderOrder = 1; room.add(m); } }
+        fogSheets = [];
+        { const fc = new T.Color(ch.fog || '#1a1410').lerp(new T.Color('#c8d8e8'), 0.45);
+          for (let k = 0; k < 2; k++) {
+            const t = mistTex.clone(); t.needsUpdate = true; t.userData.own = true; t.wrapS = t.wrapT = T.RepeatWrapping;
+            const m = new T.Mesh(new T.PlaneGeometry(2 * RW + 8, 2 * RH + 8).rotateX(-Math.PI / 2), new T.MeshBasicMaterial({ map: t, color: fc, transparent: true, opacity: 0.16 - k * 0.04, depthWrite: false }));
+            m.position.y = 0.5 + k * 1.1; m.renderOrder = 6; m.visible = !lowFxA; room.add(m); fogSheets.push(m);
+          } }
+        wx = WX[th.fx] || null; doorFx = !!S.door; doorT = 0;
       }
       // Decoration of any pack drawn about 1.3 units wide (dungeon props are big, graveyard/holiday ones tiny).
       function decoScale(kind) { const u = propGeo(kind).userData, w = Math.max(u.w, u.d) || 1; return Math.max(0.5, Math.min(3, 1.1 / w)); }
@@ -1152,6 +1213,8 @@
               if (avg > 1 / 52 && pr > 1.5) { pr = Math.max(1.5, pr - 0.25); renderer.setPixelRatio(pr); R.fit(); }
               else if (avg > 1 / 45 && renderer.shadowMap.autoUpdate) { renderer.shadowMap.autoUpdate = false; slowShadows = true; }
               else if (avg > 1 / 38 && pr > 1.25) { pr = 1.25; renderer.setPixelRatio(pr); R.fit(); }
+              // V3: still slow at the lowest step -> the purely atmospheric extras (weather, mist sheets) go.
+              else if (avg > 1 / 34 && !lowFxA) { lowFxA = true; fogSheets.forEach(m => { m.visible = false; }); }
             }
           }
           if (F3) F3.update(dt);
@@ -1254,6 +1317,9 @@
             }
             const mat = m.material, wind = !isHero && (e.state === 'wind' || e.state === 'aim');
             if (mat.emissive) mat.emissive.setRGB(e.flash > 0 ? 0.9 : e.burn > 0 ? 0.35 : wind ? 0.45 + 0.25 * Math.sin(time * 30) : 0, e.flash > 0 ? 0.9 : e.slow > 0 ? 0.25 : wind ? 0.05 : 0, e.flash > 0 ? 0.9 : e.slow > 0 ? 0.5 : 0);
+            // V3 elite: a golden glow pulse (status colours and the hit flash win over it), crown and rune ring below.
+            if (!isHero && e.elite && e.hp > 0) { if (mat.emissive && !(e.flash > 0) && !wind && !(e.burn > 0) && !(e.slow > 0) && !(e.psn > 0)) { const k = 0.5 + 0.5 * Math.sin(time * 4 + e.x); mat.emissive.setRGB(0.22 + 0.14 * k, 0.15 + 0.1 * k, 0.02); } elites.push(e); }
+            if (!isHero && !e.boss && e.state === 'dead' && !g.userData.died) { g.userData.died = true; speciesDeath(e); }
             // Boss look: glow pulse, headpiece and particles (a hit flash or a wind-up glow wins over the glow).
             if (!isHero && e.boss && e.hp > 0 && g.userData.skin && !(e.flash > 0) && !wind) skinFx(g, e.x, e.z, e.moving, dt, time);
             if (!isHero && e.boss) tickRig(g, e, time, dt);
@@ -1356,8 +1422,15 @@
             const bossOn = !!ps.giant && S.enemies.some(e => e.boss && e.hp > 0);
             giantS.visible = bossOn; if (bossOn) { giantS.position.set(hx + Math.sin(S.p.face - 0.6) * 0.9, 1.6, hz + Math.cos(S.p.face - 0.6) * 0.9); giantS.scale.setScalar(1.5 + 0.3 * Math.sin(time * 12)); if (Math.random() < dt * 14) emit(flamesC, giantS.position.x, 1.6, giantS.position.z, 0, rnd(1, 2), 0, 0.3, '#ff5a2a', -2); }
           }
-          nRune = 0;
+          nRune = 0; elites.length = 0;
           S.enemies.forEach(e => { if (!e.key) e.key = 'e' + (++uid); sync(e.key, e, e.kind, e.scale, false); });
+          elites.forEach((e, i) => {
+            const hs = 1.6 * (e.scale || 1), c = eliteCrowns.get(i), r = eliteRunes.get(i);
+            c.position.set(e.x, 2.15 * hs + 0.15 * Math.sin(time * 3 + i), e.z); c.rotation.y = time * 1.5;
+            r.position.set(e.x, 0.1, e.z); r.rotation.y = -time * 0.9; r.scale.setScalar((e.r || 1) * 3.2 * (1 + 0.05 * Math.sin(time * 5)));
+            if (F3 && Math.random() < dt * 6) F3.mote(e.x + rnd(-0.8, 0.8), rnd(0.2, 1.6) * hs, e.z + rnd(-0.8, 0.8), Math.random() < 0.6 ? '#ffd23f' : '#fff3b0', 0.3, 1, 1.4);
+          });
+          eliteCrowns.hide(elites.length); eliteRunes.hide(elites.length);
           castRunes.hide(nRune);
           ents.forEach((g, k) => { if (!seen.has(k)) { dyn.remove(g); ents.delete(k); } });
           // Projectiles with light trails.
@@ -1495,6 +1568,25 @@
             pose(angelG.g.userData.m, 6, 6, 0);
             if (!S.angel.used && Math.random() < dt * 8) fx('angel', S.angel.x, S.angel.z);
           }
+          // V3 hero hit: a red edge flash, the hero glows red and a hex shield ripples around them; low health pulses.
+          { const p = S.p;
+            if (lastHp >= 0 && p.hp < lastHp - 0.5 && !p.dead) { hurtA = 0.85; hitSh = 0.32; if (F3) { F3.ring(p.x, 1.2, p.z, '#ff3b4a', 1.6, 18, '#ffffff'); F3.star(p.x, 1.6, p.z, '#ff5a6a', 4, 0.2); } punch = Math.max(punch, 0.35); }
+            lastHp = p.hp;
+            hurtA = Math.max(0, hurtA - dt * 2.6); hitSh = Math.max(0, hitSh - dt);
+            const low = !p.dead && p.hp < p.max * 0.3 ? 0.22 + 0.18 * Math.sin(time * 6) : 0;
+            const ha = Math.max(hurtA, low); if (Math.abs((+hurtEl.style.opacity || 0) - ha) > 0.01) hurtEl.style.opacity = ha.toFixed(2);
+            const hm = ents.get('hero'); if (hm && hitSh > 0 && hm.userData.m.material.emissive) hm.userData.m.material.emissive.setRGB(hitSh * 2.4, 0.05, 0.05); }
+          if (hitSh > 0 && !S.shieldOn) { bubble.visible = true; bubbleMat.uniforms.col.value.set('#ff4a5a'); bubble.position.set(S.p.x, 1.5, S.p.z); bubble.scale.setScalar(2.1 + (0.32 - hitSh) * 2); bubbleMat.uniforms.t.value = time; }
+          else bubbleMat.uniforms.col.value.set('#7fd0ff');
+          // V3 door opening: the barrier blows apart in green light, chips fly, the portal grows out of the doorway.
+          if (S.door && !doorFx) {
+            doorFx = true; doorT = 0; const dz = -RH + 0.8;
+            if (F3) { F3.explosion(0, 1.6, dz, 1.8, { color: '#5aff9a', rocks: 14, rockCol, scorch: false, shake: 0.35 }); F3.ring(0, 0.6, dz, '#7dffae', 4, 40, '#ffffff'); F3.star(0, 2.4, dz, '#c8ffe0', 12, 0.5); F3.spiral(0, dz + 0.5, '#7dffae', 1.6, 8, 30, '#ffffff'); }
+            ring(0, dz + 1, '#7dffae', 9, 0.6); flare(0, 2, dz, '#9effc8', 12, 0.5); screenFlash('rgba(125,255,174,.35)', 0.4);
+          }
+          if (portal && S.door) { doorT += dt; const u = Math.min(1, doorT / 0.55); portal.scale.set(1, u < 1 ? u * (1.25 - 0.25 * u) : 1, 1); }
+          if (!lowFxA && wx && F3 && dt > 0) for (const w of wx) F3.weather(w[0], camX, camZ - 2, 30, 34, 9, w[1], dt, 1);
+          fogSheets.forEach((m, k) => { m.material.map.offset.set((time * (0.006 + k * 0.004)) % 1, (time * (0.004 - k * 0.007)) % 1); });
           if (S.chest && !chestG) chestG = buildChest(S.chest);
           if (chestG) animChest(S.chest, dt);
           camRoom(S, dt);
@@ -1503,7 +1595,7 @@
           renderer.render(scene, camera);
         },
       };
-      let uid = 0;
+      let uid = 0; const elites = [];
       return R;
     },
   };

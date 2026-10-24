@@ -172,6 +172,20 @@
   .skc .ski::before { will-change: transform; }
   .skc .skt { position: absolute; left: 0; right: 0; bottom: 0; z-index: 1; font-style: normal; font-family: var(--disp); font-size: 11px; letter-spacing: .4px; color: #fff; text-shadow: var(--ol);
     background: linear-gradient(180deg, transparent, rgba(0,0,0,.45)); padding: 8px 0 2px; }
+  /* V3 reward moment: cards flip in one by one, a light sweep crosses each card's art once, and the rarity colour
+     glows behind the card (a static shadow under a pulsing opacity layer: no per-frame box-shadow repaint). */
+  .skc { animation: skflip .55s cubic-bezier(.2,1.5,.4,1) both; transform-origin: 50% 80%; }
+  .skc:nth-child(2) { animation-delay: .12s; } .skc:nth-child(3) { animation-delay: .24s; }
+  @keyframes skflip { 0% { opacity: 0; transform: perspective(500px) rotateY(80deg) translateY(30px) scale(.7); } 60% { opacity: 1; } 100% { opacity: 1; transform: none; } }
+  .skc .ski::after { content: ''; position: absolute; top: -20%; bottom: -20%; width: 40%; left: -60%; z-index: 1; pointer-events: none;
+    background: linear-gradient(100deg, transparent, rgba(255,255,255,.75), transparent); transform: skewX(-18deg); animation: sksweep 1.1s .45s ease-out both; }
+  .skc:nth-child(2) .ski::after { animation-delay: .6s; } .skc:nth-child(3) .ski::after { animation-delay: .75s; }
+  @keyframes sksweep { to { left: 130%; } }
+  .skillpick { position: relative; }
+  .skc.t3, .skc.t4 { box-shadow: 0 0 0 3px var(--tc), 0 5px 0 #1c120a, 0 0 22px 4px color-mix(in srgb, var(--tc) 70%, transparent); }
+  .skillpick::before { content: ''; position: absolute; inset: -30px -10px; z-index: -1; pointer-events: none; border-radius: 50%;
+    background: radial-gradient(ellipse at center, rgba(255,220,120,.35), transparent 70%); animation: skhalo 1.6s ease-in-out infinite alternate; will-change: opacity; }
+  @keyframes skhalo { from { opacity: .35; } to { opacity: .9; } }
   .skillsnow { display: flex; flex-wrap: wrap; justify-content: center; gap: 6px; font-size: 22px; }
   .ihead { --rc: #9aa3b5; position: relative; display: flex; align-items: center; gap: 12px; text-align: left; padding: 10px 12px; border-radius: 16px; min-width: 0;
     background: linear-gradient(135deg, color-mix(in srgb, var(--rc) 85%, #000) 0%, color-mix(in srgb, var(--rc) 45%, #120806) 100%); border: 3px solid #1c120a; box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--rc) 60%, #fff), 0 3px 0 #1c120a; }
