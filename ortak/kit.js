@@ -139,6 +139,12 @@
     _ma: { key: null, n: 0 },
     win({ title, sub, stars, reward, gems, ads }) {
       let st = '';
+      // V3: once the panel is up, each earned star lands with a sparkle and a chime, then confetti falls.
+      setTimeout(() => { try {
+        const els = document.querySelectorAll('.stars span:not(.off)');
+        els.forEach((s, i) => setTimeout(() => { const r = s.getBoundingClientRect(); if (window.Fx && r.width) Fx.burst(r.left + r.width / 2, r.top + r.height / 2, 'star', 14); if (window.Sfx) Sfx.play('star'); }, 380 + i * 250));
+        if (window.Fx && Fx.confetti) setTimeout(() => Fx.confetti(stars >= 3 ? 70 : 36), 300 + stars * 250);
+      } catch (e) { } }, 0);
       for (let i = 1; i <= 3; i++) st += '<span class="' + (i <= stars ? '' : 'off') + '">⭐</span>';
       return '<div class="rays"></div><div class="ribbon">' + esc(title) + '</div>' +
         '<div class="stars">' + st + '</div>' +

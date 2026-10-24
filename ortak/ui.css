@@ -795,3 +795,77 @@ html:has(> body > .hub-bg) { background: #123a86; }
 .btn.small { font-size: 15px; padding: 6px 11px 8px; }
 .t-xl { font-size: 34px; } .t-lg { font-size: 25px; } .t-md { font-size: 19px; }
 .sheet h2 { font-size: 22px; }
+
+/* ====================================================================== */
+/* ---------- V3 juice: buttons, win stars, hub life ---------------------- */
+/* ====================================================================== */
+/* Buttons squash when pressed and spring back on release (the overshoot curve does the bounce). */
+.btn { transition: transform .16s cubic-bezier(.3, 1.9, .5, 1), filter .1s; }
+.btn:active { transform: translateY(3px) scale(1.04, .9); transition-duration: .05s; filter: brightness(1.12); }
+/* Win stars slam in with a flash ring each (the sparkle and chime come from Kit.win). */
+.stars span { position: relative; animation: v3star .55s cubic-bezier(.2, 1.9, .4, 1) both; }
+.stars span:nth-child(2) { animation-delay: .25s; } .stars span:nth-child(3) { animation-delay: .5s; }
+.stars span:not(.off)::after { content: ''; position: absolute; left: 50%; top: 50%; width: 1.2em; height: 1.2em; margin: -.6em; border-radius: 50%; border: 3px solid #fff3b0;
+  box-shadow: 0 0 16px #ffd23f; opacity: 0; animation: v3ring .5s ease-out both; animation-delay: inherit; pointer-events: none; }
+@keyframes v3star { 0% { transform: scale(3) rotate(-40deg); opacity: 0; } 60% { transform: scale(.85) rotate(6deg); opacity: 1; } 100% { transform: none; opacity: 1; } }
+@keyframes v3ring { 0% { transform: scale(.4); opacity: 1; } 100% { transform: scale(2.2); opacity: 0; } }
+/* Coin fly (Fx.fly): icons arc from the reward to the wallet; the wallet bumps on arrival. */
+.fxfly { position: fixed; z-index: 70; left: 0; top: 0; width: 26px; height: 26px; margin: -13px; font-size: 22px; line-height: 26px; text-align: center; pointer-events: none;
+  filter: drop-shadow(0 2px 0 rgba(0,0,0,.45)) drop-shadow(0 0 6px rgba(255,210,63,.8)); will-change: transform; }
+.v3bump { animation: v3bump .3s cubic-bezier(.3, 2, .5, 1); }
+@keyframes v3bump { 50% { transform: scale(1.22); filter: brightness(1.5); } }
+/* Confetti (Fx.confetti): flakes fall and flutter over everything, then go. */
+.fxconf { position: fixed; z-index: 66; top: -20px; width: 9px; height: 14px; pointer-events: none; border-radius: 2px; will-change: transform;
+  animation: v3fall var(--t) cubic-bezier(.3, .2, .6, 1) var(--dl) forwards; }
+@keyframes v3fall { 0% { transform: translate(0, 0) rotate(0); opacity: 1; } 100% { transform: translate(var(--dx), 110vh) rotate(var(--r)); opacity: .9; } }
+/* Celebration banner (Fx.celebrate): a big title that punches in over light rays. */
+.fxcel { position: fixed; inset: 0; z-index: 64; display: grid; place-items: center; pointer-events: none; }
+.fxcel .rays { position: absolute; width: 120vmax; height: 120vmax; border-radius: 50%; opacity: 0;
+  background: repeating-conic-gradient(rgba(255,230,140,.35) 0 7deg, transparent 7deg 20deg); -webkit-mask: radial-gradient(circle, #000 0, transparent 60%); mask: radial-gradient(circle, #000 0, transparent 60%);
+  animation: fxspin 10s linear infinite, v3fadeio 1.9s ease both; }
+.fxcel b { position: relative; font-size: clamp(30px, 10vw, 48px); color: #ffe066; text-align: center; padding: 0 16px; animation: v3punch 1.9s cubic-bezier(.2, 1.6, .4, 1) both; }
+.fxcel small { display: block; font-size: 16px; color: #fff; margin-top: 4px; }
+@keyframes v3punch { 0% { transform: scale(3); opacity: 0; } 18% { transform: scale(.92); opacity: 1; } 26% { transform: scale(1.04); } 80% { transform: scale(1); opacity: 1; } 100% { transform: scale(1.1); opacity: 0; } }
+@keyframes v3fadeio { 0% { opacity: 0; } 20%, 70% { opacity: 1; } 100% { opacity: 0; } }
+
+/* Hub: drifting light motes and two slow light beams behind everything (transform/opacity only). */
+.hub-bg .hbm { position: absolute; bottom: -12px; width: var(--s); height: var(--s); border-radius: 50%; background: radial-gradient(circle, #fff 0, #ffe7a0 40%, transparent 70%);
+  opacity: 0; will-change: transform, opacity; animation: v3mote var(--t) linear var(--dl) infinite; }
+@keyframes v3mote { 0% { transform: translate(0, 0); opacity: 0; } 12% { opacity: .85; } 85% { opacity: .5; } 100% { transform: translate(var(--sx), -105vh); opacity: 0; } }
+.hub-bg .hbr { position: absolute; left: 50%; top: -30vh; width: 160vmax; height: 160vmax; margin-left: -80vmax; opacity: .16; will-change: transform;
+  background: repeating-conic-gradient(from 0deg at 50% 50%, rgba(255,255,255,.6) 0 4deg, transparent 4deg 22deg);
+  -webkit-mask: radial-gradient(circle at 50% 50%, #000 0, transparent 45%); mask: radial-gradient(circle at 50% 50%, #000 0, transparent 45%); animation: fxspin 60s linear infinite; }
+.hub-bg .hbr.r2 { opacity: .1; animation-duration: 90s; animation-direction: reverse; }
+/* Game cards: slide in one after another, a light sweep crosses each card every few seconds, the picture breathes,
+   the accent colour glows on the frame; tapping a card zooms it up before the game opens. */
+.game-card { animation: v3card .5s cubic-bezier(.2, 1.4, .4, 1) backwards; }
+.game-card:nth-child(2) { animation-delay: .07s; } .game-card:nth-child(3) { animation-delay: .14s; } .game-card:nth-child(4) { animation-delay: .21s; }
+.game-card:nth-child(5) { animation-delay: .28s; } .game-card:nth-child(6) { animation-delay: .35s; }
+@keyframes v3card { from { opacity: 0; transform: translateY(26px) scale(.94); } }
+.game-card img { animation: v3breathe 9s ease-in-out infinite alternate; will-change: transform; }
+.game-card:nth-child(even) img { animation-delay: -4.5s; }
+@keyframes v3breathe { from { transform: scale(1); } to { transform: scale(1.07) translateY(-4px); } }
+.game-card::after { content: ''; position: absolute; top: -20%; bottom: -20%; left: 0; width: 34%; z-index: 2; pointer-events: none; transform: translateX(-160%) skewX(-18deg);
+  background: linear-gradient(90deg, transparent, rgba(255,255,255,.4), transparent); will-change: transform; animation: v3sweep 5.5s ease-in-out infinite; }
+.game-card:nth-child(2)::after { animation-delay: .9s; } .game-card:nth-child(3)::after { animation-delay: 1.8s; } .game-card:nth-child(4)::after { animation-delay: 2.7s; }
+.game-card:nth-child(5)::after { animation-delay: 3.6s; } .game-card:nth-child(6)::after { animation-delay: 4.5s; }
+@keyframes v3sweep { 0%, 62% { transform: translateX(-160%) skewX(-18deg); } 82%, 100% { transform: translateX(420%) skewX(-18deg); } }
+.game-card::before { content: ''; position: absolute; inset: 0; z-index: 2; pointer-events: none; border-radius: inherit; box-shadow: inset 0 0 0 3px var(--acc), inset 0 0 24px color-mix(in srgb, var(--acc) 60%, transparent);
+  opacity: 0; will-change: opacity; animation: v3glow 2.4s ease-in-out infinite alternate; }
+@keyframes v3glow { to { opacity: .75; } }
+.game-card.go { transform: scale(1.06) !important; z-index: 3; transition: transform .2s cubic-bezier(.2, 1.8, .4, 1); filter: brightness(1.15); }
+.game-card.go::before { opacity: 1; animation: none; }
+/* First launch of the session: the emblem zooms out of a flash, the wordmark punches in, rays spin, then it lifts. */
+.v3intro { position: fixed; inset: 0; z-index: 80; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; overflow: hidden;
+  background: radial-gradient(circle at 50% 45%, #3f8fff 0%, #1d56b8 40%, #0b2660 100%); animation: v3out .45s ease-in 1.75s forwards; }
+.v3intro .rays { position: absolute; width: 150vmax; height: 150vmax; opacity: .3; background: repeating-conic-gradient(rgba(255,240,180,.7) 0 6deg, transparent 6deg 18deg);
+  -webkit-mask: radial-gradient(circle, #000 0, transparent 55%); mask: radial-gradient(circle, #000 0, transparent 55%); animation: fxspin 12s linear infinite; }
+.v3intro img { position: relative; width: 120px; height: 120px; object-fit: contain; filter: drop-shadow(0 12px 20px rgba(0,0,0,.5)) drop-shadow(0 0 40px rgba(255,200,80,.8)); animation: v3emb .8s cubic-bezier(.2, 1.6, .4, 1) both; }
+.v3intro p { position: relative; margin: 0; font-size: 46px; color: #ffd84a; font-family: var(--disp); text-shadow: var(--ol); animation: v3punch2 .6s .35s cubic-bezier(.2, 1.8, .4, 1) both; }
+.v3intro small { position: relative; color: #dbe8ff; font-weight: 800; letter-spacing: 2px; text-transform: uppercase; font-size: 12px; animation: fade .4s .8s both; }
+.v3intro .fl { position: absolute; inset: 0; background: radial-gradient(circle at 50% 45%, #fff 0, rgba(255,255,255,.6) 20%, transparent 60%); animation: v3flash .7s ease-out both; }
+@keyframes v3emb { 0% { transform: scale(.2) rotate(-25deg); opacity: 0; } 100% { transform: none; opacity: 1; } }
+@keyframes v3punch2 { 0% { transform: scale(2.6); opacity: 0; } 100% { transform: none; opacity: 1; } }
+@keyframes v3flash { 0% { opacity: 1; } 100% { opacity: 0; } }
+@keyframes v3out { to { opacity: 0; transform: scale(1.08); visibility: hidden; } }
+@media (prefers-reduced-motion: reduce) { .hub-bg .hbm, .hub-bg .hbr, .game-card img, .game-card::after, .game-card::before { animation: none; } .v3intro { display: none; } }

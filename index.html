@@ -117,6 +117,10 @@
       e.preventDefault();
       if (card.dataset.busy) return;
       card.dataset.busy = '1';
+      // V3: the chosen card zooms up with a sparkle before the game opens.
+      card.classList.add('go'); Sfx.play('card');
+      { const r = card.getBoundingClientRect(); Fx.burst(r.left + r.width / 2, r.top + r.height / 2, card.style.getPropertyValue('--acc') || 'star', 24); }
+      await new Promise(r => setTimeout(r, 230));
       await Ads.gameSwitch(card.getAttribute('href'));
       location.href = card.getAttribute('href');
     }));
@@ -485,6 +489,7 @@
     if (t.closest('[data-plv]')) {
       const r = PlayerLv.claim(); if (!r) return;
       const items = [{ icon: '⭐', label: '+' + r.stars, sub: L('Levels ', 'Seviye ') + r.levels[0] + (r.levels.length > 1 ? '–' + r.levels[r.levels.length - 1] : ''), rarity: 'legendary' }];
+      if (Fx.celebrate) { Fx.celebrate(L('LEVEL UP!', 'SEVİYE ATLADIN!'), PlayerLv.title().name + ' · ' + L('Lv. ', 'Sv. ') + PlayerLv.level()); await new Promise(r => setTimeout(r, 1500)); }
       await Fx.reveal({ title: L('LEVEL REWARDS', 'SEVİYE ÖDÜLLERİ'), items });
       for (let k = 0; k < r.chests; k++) await openChest('royal');
       render(); return;
@@ -565,6 +570,24 @@
     if (tab !== 'play') { setTab('play'); return; }
     UI.exitApp();
   });
+
+  // V3 living background: light motes drifting up and two slow rays (CSS transform/opacity animations only).
+  { const bg = document.querySelector('.hub-bg');
+    if (bg && !bg.children.length) {
+      let h = '<i class="hbr"></i><i class="hbr r2"></i>';
+      for (let i = 0; i < 16; i++) h += '<i class="hbm" style="left:' + (Math.random() * 100).toFixed(1) + '%;--s:' + (3 + Math.random() * 6).toFixed(1) + 'px;--t:' + (7 + Math.random() * 8).toFixed(1) + 's;--dl:' + (-Math.random() * 12).toFixed(1) + 's;--sx:' + (Math.random() * 80 - 40).toFixed(0) + 'px"></i>';
+      bg.innerHTML = h;
+    } }
+  // V3 first impression: once per app launch the emblem bursts in with the wordmark, then the hub slides up.
+  try {
+    if (!sessionStorage.getItem('v3intro') && !location.hash) {
+      sessionStorage.setItem('v3intro', '1');
+      const it = document.createElement('div'); it.className = 'v3intro';
+      it.innerHTML = '<div class="rays"></div><div class="fl"></div><img src="ortak/img/emblem.png" alt=""><p>Grab Rush</p><small>' + L('6 games · one wallet', '6 oyun · tek kasa') + '</small>';
+      document.body.appendChild(it); Sfx.play('levelup');
+      const done = () => it.remove(); it.onclick = done; setTimeout(done, 2300);
+    }
+  } catch (e) { }
 
   Ads.banner(true);
   if (/^#(shop|rewards)$/.test(location.hash || '')) tab = location.hash.slice(1), setTab(tab);

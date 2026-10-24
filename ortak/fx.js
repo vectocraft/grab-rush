@@ -165,6 +165,51 @@
     Save.spend = n => { const ok = orig(n); if (ok && n > 0) burst(lastX, lastY, 'star', 22); return ok; };
     Save.__fxHooked = true;
   }
+  // ---------- V3 juice ----------
+  // Fx.fly(n, icon, from, to): icons arc from a point (default: the last touch) to the wallet, each landing bumps it.
+  const wallet = () => document.querySelector('#coins') || document.querySelector('.coin-pill, .cur');
+  function fly(n, icon, from, to) { try { fly0(n, icon, from, to); } catch (e) { } }
+  function fly0(n, icon, from, to) {
+    style(); getLayer();
+    const t = to || wallet(); if (!t || !t.getBoundingClientRect) return;
+    const r = t.getBoundingClientRect(); if (!r.width) return;
+    const tx = r.left + r.width / 2, ty = r.top + r.height / 2, f = from || { x: lastX, y: lastY }, cnt = Math.max(3, Math.min(12, n || 8));
+    for (let i = 0; i < cnt; i++) {
+      const el = document.createElement('i'); el.className = 'fxfly'; el.textContent = icon || '⭐'; layer.appendChild(el);
+      const sx = f.x + (Math.random() - 0.5) * 70, sy = f.y + (Math.random() - 0.5) * 50, mx = (sx + tx) / 2 + (Math.random() - 0.5) * 120, my = Math.min(sy, ty) - 60 - Math.random() * 80;
+      const kf = []; for (let k = 0; k <= 10; k++) { const u = k / 10, a = (1 - u) * (1 - u), b = 2 * u * (1 - u), c = u * u; kf.push({ transform: 'translate(' + (a * sx + b * mx + c * tx) + 'px,' + (a * sy + b * my + c * ty) + 'px) scale(' + (1.3 - 0.6 * u) + ')' }); }
+      const an = el.animate ? el.animate(kf, { duration: 650 + i * 45, delay: i * 40, easing: 'cubic-bezier(.5,0,.8,.6)', fill: 'both' }) : null;
+      const end = () => { el.remove(); t.classList.remove('v3bump'); void t.offsetWidth; t.classList.add('v3bump'); if (window.Sfx && i % 3 === 0) Sfx.play('cash'); };
+      if (an) an.onfinish = end; else setTimeout(end, 700);
+    }
+  }
+  // Fx.confetti(n): a shower of coloured flakes over the whole screen.
+  function confetti(n) { try { confetti0(n); } catch (e) { } }
+  function confetti0(n) {
+    style(); getLayer();
+    const C = ['#ff4d6d', '#ffd23f', '#3be07a', '#4dabff', '#c77dff', '#ffffff', '#ff9a3a'];
+    for (let i = 0; i < (n || 60); i++) {
+      const p = document.createElement('i'); p.className = 'fxconf';
+      p.style.cssText = 'left:' + (Math.random() * 100).toFixed(1) + '%;background:' + C[i % C.length] + ';--t:' + (1.6 + Math.random() * 1.4).toFixed(2) + 's;--dl:' + (Math.random() * 0.5).toFixed(2) + 's;--dx:' + (Math.random() * 120 - 60).toFixed(0) + 'px;--r:' + (Math.random() * 1080 - 540).toFixed(0) + 'deg' + (i % 3 ? '' : ';width:6px;height:6px;border-radius:50%');
+      layer.appendChild(p); setTimeout(() => p.remove(), 3600);
+    }
+  }
+  // Fx.celebrate(title, sub): a big punch-in title over spinning rays with confetti and a fanfare (level up etc.).
+  function celebrate(title, sub) {
+    style(); getLayer();
+    const el = document.createElement('div'); el.className = 'fxcel';
+    el.innerHTML = '<div class="rays"></div><b>' + title + (sub ? '<small>' + sub + '</small>' : '') + '</b>';
+    layer.appendChild(el); setTimeout(() => el.remove(), 2000);
+    confetti(70); if (window.Sfx) Sfx.play('levelup');
+  }
+  // Every star gained (daily reward, quests, level rewards, win stars) flies into the wallet.
+  function hookAdd() {
+    if (!window.Save || Save.__fxAdd) return;
+    const orig = Save.addCoins.bind(Save);
+    Save.addCoins = n => { orig(n); if (n > 0) setTimeout(() => fly(Math.ceil(n / 2), '⭐'), 60); };
+    Save.__fxAdd = true;
+  }
   hookSpend(); addEventListener('DOMContentLoaded', hookSpend);
-  window.Fx = { reveal, burst, RAR, open: 0, at: () => ({ x: lastX, y: lastY }) };
+  hookAdd(); addEventListener('DOMContentLoaded', hookAdd);
+  window.Fx = { reveal, burst, fly, confetti, celebrate, RAR, open: 0, at: () => ({ x: lastX, y: lastY }) };
 })();
