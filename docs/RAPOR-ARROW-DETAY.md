@@ -13,7 +13,7 @@ Yalnızca görsel değişiklik var. Oyun mantığına, dengeye, vuruş alanları
 | 349–350 | Yaratıklar için paylaşımlı ayrı dış çizgi malzemesi: kalınlık 0,05 → 0,038 (nesne birimi), daha soğuk koyu renk. Küçük boyda yüz detayları çizginin altında kaybolmuyor. |
 | 353–364 | `charMesh(name, scale, 'foe')`: yaratık shader'ı ve çizgisi; gölge diski 2,6 → 2,3 × çizim ölçeği (ayağa daha sıkı oturuyor); modelin gerçek kafa yüksekliği `userData.hy` olarak saklanıyor. |
 | 752 | Elit tacı 2,4 → 1,7 ölçek (küçülen gövdeye göre). |
-| 757 (warmV2) | Yaratık shader'ı ilk odada önceden derleniyor, ilk yaratık çıkınca takılma olmuyor. |
+| 729 (warmV2) | Yaratık shader'ı ilk odada önceden derleniyor, ilk yaratık çıkınca takılma olmuyor. |
 | 1244 | `R.top(e)`: yaratığın çizilen kafa yüksekliği (zıplama dahil). Can barı bunu kullanıyor. |
 | 1366–1376 | **Yürürken zıplama ve sallanma**: her adımda küçük bir sekme (kafa yüksekliğinin %9'u), inişte basılma, tepede uzama ve yana sallanma (±4°). Yürümeye başlarken ve dururken yumuşak geçiş var. Bosslarda yok, çünkü onların kendi düzeni var. |
 | 1381–1384 | Kenar ışığı rengi ve şiddeti her karede ayarlanıyor (elit, boss veya normal). |
