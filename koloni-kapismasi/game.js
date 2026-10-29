@@ -245,9 +245,12 @@
       ai: [], sel: [], tapSel: false, drag: null, checkT: 0, shake: 0, shareT: 0,
       // Rival production: grows to 1.4x by level 20, then keeps pace with the player's upgrades (about 2.6x at level 80, close to a fully upgraded player).
       aiMul: (Math.min(1.4, 0.75 + 0.045 * Math.min(lv, 20)) + Math.min(1.6, 0.02 * Math.max(0, lv - 20))) * (1 - ease()),
-      aiThink: Math.max(lv > 40 ? 1.7 : 2, 3.2 - lv * 0.05), // human-paced: difficulty comes from smarter moves, not speed
+      // Human-paced: difficulty comes from smarter moves, not speed. Tester (25 Oct): rivals moved too fast and answered
+      // every player move at once, so they think a bit slower and only notice the player's troops after aiReact seconds.
+      aiThink: Math.max(lv > 40 ? 2.2 : 2.5, 3.6 - lv * 0.04),
+      aiReact: Math.max(1.5, 2.5 - lv * 0.02),
       aiMargin: Math.max(1.15, 1.8 - lv * 0.025),
-      aiDefend: Math.min(0.9, 0.45 + lv * 0.03) * (1 - ease()),
+      aiDefend: Math.min(0.75, 0.35 + lv * 0.02) * (1 - ease()),
       aiPool: lv < 4 ? 1 : lv < 12 ? 2 : 3,
       aiGarrison: Math.min(0.9, 0.4 + lv * 0.02),
     };
@@ -281,13 +284,13 @@
     if (n < 1 || from === to || !adjacent(from, to)) return;
     if (from.iceT > 0) { if (owner === 1) floatText(from.x, from.y - 34, L('❄️ Frozen!', '❄️ Donmuş!'), '#bfeaff'); return; }
     from.units -= n;
-    S.streams.push({ from, to, owner, left: n, t: 0 });
+    S.streams.push({ from, to, owner, left: n, t: 0, born: S.time });
   }
 
   function emitDot(s) {
     const f = s.from, dx = s.to.x - f.x, dy = s.to.y - f.y, d = Math.hypot(dx, dy) || 1;
     const ux = dx / d, uy = dy / d, off = (Math.random() - 0.5) * 12;
-    S.dots.push({ x: f.x + ux * f.r - uy * off, y: f.y + uy * f.r + ux * off, to: s.to, owner: s.owner, dead: false });
+    S.dots.push({ x: f.x + ux * f.r - uy * off, y: f.y + uy * f.r + ux * off, to: s.to, owner: s.owner, dead: false, born: s.born });
   }
 
   function dotSpeed(owner) {
@@ -310,7 +313,7 @@
     n.pulse = 1;
     if (n.units < 0) {
       const prev = n.owner;
-      n.owner = d.owner;
+      n.owner = d.owner; n.memT = null;
       n.units = Math.abs(n.units);
       burst(n.x, n.y, COLORS[d.owner], 22, 120);
       if (d.owner === 1) { S.energy = Math.min(100, S.energy + 12); UI.vibrate(15); Sfx.play('pop'); floatText(n.x, n.y - 30, L('CAPTURED!', 'ALINDI!'), '#fff36b'); }
@@ -327,11 +330,13 @@
   }
 
   // Troops on their way to each node, by owner (dots in flight + streams still leaving).
-  function incomingMap() {
+  // seen: a rival's view - the player's troops count only once they have been on the move for aiReact seconds.
+  function incomingMap(seen) {
     const inc = new Map();
     const add = (n, owner, k) => { let r = inc.get(n); if (!r) inc.set(n, r = {}); r[owner] = (r[owner] || 0) + k; };
-    for (const d of S.dots) add(d.to, d.owner, 1);
-    for (const s of S.streams) add(s.to, s.owner, s.left);
+    const late = x => seen && x.owner === 1 && S.time - (x.born || 0) < S.aiReact;
+    for (const d of S.dots) if (!late(d)) add(d.to, d.owner, 1);
+    for (const s of S.streams) if (!late(s)) add(s.to, s.owner, s.left);
     return inc;
   }
   const hostile = (r, owner) => { let h = 0; if (r) for (const o in r) if (+o !== owner) h += r[o]; return h; };
@@ -344,7 +349,11 @@
       let top = 0; for (const o in cnt) if (+o > 1) top = Math.max(top, cnt[o]);
       S.huntP = S.lv < 6 ? 0 : (cnt[1] || 0) > top * 1.2 ? 5 + Math.min(6, S.lv * 0.08) : 1;
     }
-    const inc = incomingMap(), own = n => (inc.get(n) || {})[ai.owner] || 0;
+    const inc = incomingMap(true), own = n => (inc.get(n) || {})[ai.owner] || 0;
+    // Rivals see a player's region garrison with a lag: troops just sent out still count as home for a few seconds
+    // (testers: emptied villages were attacked at once).
+    for (const n of S.nodes) if (n.owner === 1 && (n.memT == null || S.time - n.memT > S.aiReact * 2.5)) { n.memU = n.units; n.memT = S.time; }
+    const seenU = t => t.owner === 1 && t.memU != null ? Math.max(t.units, t.memU) : t.units;
     const threat = n => hostile(inc.get(n), ai.owner) * (n.type === 'fort' ? 0.5 : 1) - n.units - own(n);
     // Garrison: what the strongest hostile neighbour could throw at a region, so the AI never strips it bare.
     const keep = m => { let k = 0; for (const id of m.nb) { const o = S.nodes[id]; if (o.owner !== 0 && o.owner !== ai.owner) k = Math.max(k, o.units); } return Math.min(m.units - 1, k * S.aiGarrison / (m.type === 'fort' ? 2 : 1)); };
@@ -366,15 +375,17 @@
       const near = srcs.filter(m => adjacent(m, t));
       if (!near.length) continue;
       // Neutral regions don't produce, so a thin margin is enough; owned ones keep growing while troops march.
-      const need = (t.units + hostile(inc.get(t), ai.owner) * 0.5) * (t.type === 'fort' ? 2 : t.type === 'core' ? 1.7 : 1) * (t.owner === 0 ? 1.1 : S.aiMargin) + 2 - own(t);
+      const need = (seenU(t) + hostile(inc.get(t), ai.owner) * 0.5) * (t.type === 'fort' ? 2 : t.type === 'core' ? 1.7 : 1) * (t.owner === 0 ? 1.1 : S.aiMargin) + 2 - own(t);
       if (need <= 0) continue;
       const use = [];
       let sum = 0;
       for (const m of near) { if (use.length >= S.aiPool) break; use.push(m); sum += spare(m); if (sum > need) break; }
       if (sum <= need) continue;
       const d = Math.min(...use.map(m => Math.hypot(t.x - m.x, t.y - m.y)));
-      // Rivals fight each other, but gang up on a player who is running away with the map, and pounce on emptied regions.
-      const score = need + d * 0.06 + use.length * 4 - (t.type !== 'normal' ? 6 : 0) - (t.owner === 1 ? S.huntP + (t.units < 4 ? 6 : 0) : 0);
+      // Rivals fight each other and gang up on a player who is running away with the map.
+      // No sniping: a region the player's troops are marching on (not the player's own) is left to the player for now.
+      const race = t.owner !== 1 && ((inc.get(t) || {})[1] || 0) > 0 ? 12 : 0;
+      const score = need + d * 0.06 + use.length * 4 + race - (t.type !== 'normal' ? 6 : 0) - (t.owner === 1 ? S.huntP : 0);
       if (score < bs) { bs = score; best = { t, use, need }; }
     }
     if (best) { let left = best.need * 1.15 + 3; for (const m of best.use) { const k = Math.min(spare(m), Math.ceil(left)); send(m, best.t, ai.owner, k); left -= k; } return; }

@@ -28,6 +28,8 @@
   /* Lens vignette over the 3D view: corners fall into shadow, the arena around the hero stays bright. */
   body::after { content: ''; position: fixed; inset: 0; z-index: 1; pointer-events: none; background: radial-gradient(ellipse 85% 70% at 50% 58%, transparent 48%, rgba(6,4,16,.66) 100%); }
   #c { z-index: 2; }
+  #hurt { position: fixed; inset: 0; z-index: 2; pointer-events: none; opacity: 0; will-change: opacity;
+    background: radial-gradient(ellipse 80% 75% at 50% 50%, transparent 42%, rgba(210,0,30,.75) 100%); }
   body.inmenu::after { background: radial-gradient(ellipse 90% 70% at 50% 40%, transparent 60%, rgba(8,4,2,.5) 100%); }
   /* Menu */
   #menu { position: fixed; inset: 0; z-index: 6; display: none; flex-direction: column; pointer-events: none; }
@@ -222,6 +224,7 @@
 <body class="inmenu">
 <canvas id="c3d"></canvas>
 <canvas id="c"></canvas>
+<div id="hurt"></div>
 
 <div class="hud">
   <div class="hud-row">
@@ -269,6 +272,7 @@
 <script src="props.js"></script>
 <script src="icons.js"></script>
 <script src="skins.js"></script>
+<script src="economy-rules.js"></script>
 <script src="render3d.js"></script>
 <script src="game.js"></script>
 </body>

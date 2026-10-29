@@ -12,7 +12,7 @@
   };
   const plugin = () => {
     const c = window.Capacitor;
-    return c && c.isNativePlatform && c.isNativePlatform() && c.Plugins && c.Plugins.CloudSave;
+    return c && c.getPlatform && c.getPlatform() === 'android' && c.Plugins && c.Plugins.CloudSave;
   };
   const xpOf = () => { try { return PlayerLv.info().xp; } catch (e) { return 0; } };
   let signedIn = false, sent = '';

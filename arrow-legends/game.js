@@ -14,7 +14,8 @@
   // Legacy test balances only: preserve normal balances and all existing talent levels.
   if (G.gold > 1e10) { G.gold = 1000000; Save.save(); }
   // Full integer gold keeps even small rewards visible at large balances.
-  const goldFmt = n => Math.floor(n).toLocaleString(LANG === 'tr' ? 'tr-TR' : 'en-US');
+  const NUMF = new Intl.NumberFormat(LANG === 'tr' ? 'tr-TR' : 'en-US'); // toLocaleString builds a formatter per call
+  const goldFmt = n => NUMF.format(Math.floor(n));
   // Outfits (skins.js): bought with stars per hero (owned as 'hero.id'), worn one per hero. Cosmetic only.
   const outfitOf = h => window.ArrowSkins ? ArrowSkins.find(h, G.outfit[h]) : null;
   const hasOutfit = (h, id) => !id || G.outfits.includes(h + '.' + id);
@@ -59,7 +60,9 @@
     for (const k in b.pc) out[k] = b.pc[k] * (1 + 0.35 * it.r);
     return out;
   };
-  const upCost = it => ({ gold: Math.round(60 * Math.pow(1.16, it.l - 1) * (1 + 0.25 * it.r)), scrolls: 1 + Math.floor(it.l / 5) });
+  // Economy and difficulty numbers live in economy-rules.js (shared with the models in tests/).
+  const AR = window.ArrowRules;
+  const upCost = it => ({ gold: AR.upCost(it.l, it.r), scrolls: 1 + Math.floor(it.l / 5) });
   const newItem = (b, r) => ({ id: G.uid++, b, r, l: 1 });
   if (!G.inv) { G.inv = [newItem('xbow', 0), newItem('vest', 0)]; G.eq.weapon = G.inv[0].id; G.eq.armor = G.inv[1].id; Save.save(); }
   const itemById = id => G.inv.find(i => i.id === id);
@@ -87,13 +90,15 @@
     atk: { icon: '⚔️', name: () => L('Strength', 'Güç'), desc: l => L('Attack +' + 3 * l + '%', 'Saldırı +%' + 3 * l) },
     hp: { icon: '❤️', name: () => L('Vitality', 'Dayanıklılık'), desc: l => L('Max HP +' + 3 * l + '%', 'Maks can +%' + 3 * l) },
     heal: { icon: '💖', name: () => L('Recovery', 'İyileşme'), desc: l => L('Heal ' + 2 * l + '% on level up', 'Seviye atlayınca %' + 2 * l + ' iyileş') },
-    gold: { icon: '💰', name: () => L('Greed', 'Açgözlülük'), desc: l => L('Gold +' + 5 * l + '%', 'Altın +%' + 5 * l) },
+    gold: { icon: '💰', name: () => L('Greed', 'Açgözlülük'), desc: l => L('Gold +' + 2 * l + '%', 'Altın +%' + 2 * l) },
     speed: { icon: '👟', name: () => L('Agility', 'Çeviklik'), desc: l => L('Move speed +' + 2 * l + '%', 'Hareket hızı +%' + 2 * l) },
     crit: { icon: '🎯', name: () => L('Precision', 'İsabet'), desc: l => L('Crit chance +' + l + '%', 'Kritik şansı +%' + l) },
   };
-  // L is this talent's current level; other talents and legacy talentBuys never affect price.
-  // Gentle quadratic: L=0/5/10/20 costs 100/225/400/900 gold.
-  const talentCost = k => Math.round(100 * Math.pow(1 + G.talents[k] / 10, 2));
+  // Talent level as used by stats, never above the cap.
+  // Caps: Strength and Vitality open up (+2 per chapter) once the player is past the early chapters.
+  const talMax = k => AR.talentMax(k, G.chapter - 1);
+  const tal = k => Math.min(G.talents[k] || 0, talMax(k));
+  const talentCost = k => AR.talentCost(G.talents[k]);
 
   // ---------- Chapters ----------
   // Every chapter (10 rooms) has its own world: floor, walls, banners, obstacles, decoration, ground pools and
@@ -107,7 +112,7 @@
     { name: () => L('Haunted Cellar', 'Perili Kiler'), floor: '#6a5a7a', light: '#d9b8ff', fog: '#130d1c', carpet: false,
       th: { tiles: ['floor_wood', 'floor_wood'], wall: 'wall_shelves', wall2: 'wall_window', banner: 'banner_green', obst: ['coffin', 'grave_cross', 'grave_round', 'pumpkin_tall', 'urn', 'grave_deco'], deco: ['pumpkin', 'candle_lit', 'candles', 'urn'], fx: 'wisps' } },
     { name: () => L('Molten Depths', 'Erimiş Derinlikler'), floor: '#7a4a36', light: '#ffb07a', fog: '#200a04', carpet: false,
-      th: { tiles: ['floor_rocky', 'floor_dirt'], wall: 'wall_cracked', wall2: 'wall_broken', banner: 'banner_shield', obst: ['rocks_tall', 'altar', 'rubble', 'obelisk', 'barrel'], deco: ['fire_basket', 'rubble', 'coins'], pool: 'lava', fx: 'embers' } },
+      th: { tiles: ['floor_rocky', 'floor_dirt'], wall: 'wall_cracked', wall2: 'wall_broken', banner: 'banner_shield', obst: ['rocks_tall', 'altar', 'obelisk', 'barrel'] /* no 'rubble' obstacle: the model is a long strip of loose pebbles, shrunk to obstacle size it lay flat and read as a shadow while still blocking (tester, G-19) */, deco: ['fire_basket', 'rubble', 'coins'], pool: 'lava', fx: 'embers' } },
     { name: () => L('Frozen Catacombs', 'Donmuş Yeraltı'), floor: '#a8c4dc', light: '#cfe9ff', fog: '#0c1626', carpet: '#7fb8e0',
       th: { tiles: ['floor', 'floor_rocks'], wall: 'wall', wall2: 'wall_cracked', banner: 'banner_white', obst: ['snow_rocks', 'tree_snow', 'tree_snow_b', 'barrel', 'crates'], deco: ['snow_pile', 'snow_rocks', 'candles'], pool: 'ice', fx: 'snow' } },
     { name: () => L('Necropolis', 'Ölüler Şehri'), floor: '#6e7a62', light: '#c8ff9a', fog: '#0b1408', carpet: '#4a7a36',
@@ -116,35 +121,36 @@
   const chapterOf = n => CHAPTERS[(n - 1) % CHAPTERS.length];
   // Chapter length: 10, 20, 30, 40, then 50 rooms. A chapter is cut into 10-room stages; every stage ends in a boss
   // and is a bit harder than the one before (more foes, stronger), so a long chapter keeps climbing.
-  const roomsOf = ch => Math.min(50, 10 * ch);
-  const stage = room => Math.floor((room - 1) / 10);
-  const stageRoom = room => (room - 1) % 10 + 1;
-  const step = (ch, room) => (ch - 1) * 10 + stageRoom(room) + stage(room) * 4;
-  // Enemy strength: +1.2% per step. Measured with a 'normal player' bot (imperfect dodging, F2P gear): the old +1.9%
-  // grew ~10x by chapter 15 while such a player's power grows ~5.5x, so mid/late chapters were unwinnable.
-  const power = (ch, room) => 0.72 * Math.pow(1.012, step(ch, room) - 1);
+  const { roomsOf, stage, stageRoom, step, goldScale, winBonus } = AR, power = AR.enemyPower;
+  // Once per save (economy v2/v3, 25 Oct 2026, tester feedback): Greed used to be applied twice and talents had no
+  // cap, so saves hold absurd gold and talent levels. Clamp talents to the caps and trim gold to ~10 chapter clears.
+  if ((G.econ || 1) < 3) {
+    for (const k in TALENTS) G.talents[k] = Math.min(G.talents[k] || 0, talMax(k));
+    G.gold = Math.min(G.gold, Math.max(3000, 100 * winBonus(G.chapter)));
+    G.econ = 3; Save.save();
+  }
 
   // ---------- Skills (one of three on every level-up) ----------
   const SKILLS = {
-    front: { icon: '⬆️', max: 3, name: () => L('Front Arrow +1', 'Ön Ok +1'), desc: () => L('One more arrow side by side', 'Yan yana bir ok daha') },
-    multi: { icon: '⏩', max: 3, name: () => L('Multishot', 'Çoklu Atış'), desc: () => L('Fire an extra volley', 'Fazladan bir atış dalgası') },
+    front: { icon: '⬆️', name: () => L('Front Arrow +1', 'Ön Ok +1'), desc: () => L('One more arrow side by side', 'Yan yana bir ok daha') },
+    multi: { icon: '⏩', name: () => L('Multishot', 'Çoklu Atış'), desc: () => L('Fire an extra volley', 'Fazladan bir atış dalgası') },
     diag: { cls: 'archer', icon: '↗️', max: 2, name: () => L('Diagonal Arrows', 'Çapraz Oklar'), desc: () => L('+2 arrows at an angle', 'Açılı +2 ok') },
     side: { cls: 'archer', icon: '↔️', max: 2, name: () => L('Side Arrows', 'Yan Oklar'), desc: () => L('Shoot left and right too', 'Sağa ve sola da atar') },
     rear: { cls: 'archer', icon: '⬇️', max: 2, name: () => L('Rear Arrow', 'Arka Ok'), desc: () => L('Shoot behind you', 'Arkana da atar') },
     ricochet: { cls: 'archer', icon: '🔀', max: 3, name: () => L('Ricochet', 'Seken Ok'), desc: () => L('Arrows bounce to another enemy', 'Ok başka düşmana seker') },
     pierce: { cls: 'archer', icon: '📌', max: 2, name: () => L('Piercing Shot', 'Delici Atış'), desc: () => L('Arrows go through enemies', 'Oklar düşmanları deler') },
     wall: { cls: 'archer', icon: '🧱', max: 2, name: () => L('Bouncy Wall', 'Duvar Sekmesi'), desc: () => L('Arrows bounce off walls', 'Oklar duvardan seker') },
-    atk: { icon: '⚔️', max: 5, name: () => L('Attack Boost', 'Saldırı Artışı'), desc: () => L('Attack +25%', 'Saldırı +%25') },
-    spd: { icon: '⚡', max: 5, name: () => L('Attack Speed', 'Atış Hızı'), desc: () => L('Attack speed +20%', 'Atış hızı +%20') },
-    crit: { icon: '💥', max: 5, name: () => L('Crit Master', 'Kritik Ustası'), desc: () => L('Crit chance +10%, crit damage +40%', 'Kritik şansı +%10, kritik hasarı +%40') },
-    hp: { icon: '❤️', max: 5, name: () => L('HP Boost', 'Can Artışı'), desc: () => L('Max HP +20% and heal', 'Maks can +%20 ve iyileş') },
-    fire: { icon: '🔥', max: 1, name: () => L('Blaze', 'Alev Oku'), desc: () => L('Arrows set enemies on fire', 'Oklar düşmanı yakar') },
-    ice: { icon: '❄️', max: 1, name: () => L('Freeze', 'Buz Oku'), desc: () => L('Arrows slow enemies', 'Oklar düşmanı yavaşlatır') },
-    bolt: { icon: '🌩️', max: 1, name: () => L('Lightning', 'Yıldırım'), desc: () => L('Hits chain lightning to nearby foes', 'İsabetler yakındakilere yıldırım zinciri atar') },
+    atk: { icon: '⚔️', name: () => L('Attack Boost', 'Saldırı Artışı'), desc: () => L('Attack +25%', 'Saldırı +%25') },
+    spd: { icon: '⚡', name: () => L('Attack Speed', 'Atış Hızı'), desc: () => L('Attack speed +20%', 'Atış hızı +%20') },
+    crit: { icon: '💥', name: () => L('Crit Master', 'Kritik Ustası'), desc: () => L('Crit chance +10%, crit damage +40%', 'Kritik şansı +%10, kritik hasarı +%40') },
+    hp: { icon: '❤️', name: () => L('HP Boost', 'Can Artışı'), desc: () => L('Max HP +20% and heal', 'Maks can +%20 ve iyileş') },
+    fire: { icon: '🔥', name: () => L('Blaze', 'Alev Oku'), desc: () => L('Arrows set enemies on fire', 'Oklar düşmanı yakar') },
+    ice: { icon: '❄️', name: () => L('Freeze', 'Buz Oku'), desc: () => L('Arrows slow enemies', 'Oklar düşmanı yavaşlatır') },
+    bolt: { icon: '🌩️', name: () => L('Lightning', 'Yıldırım'), desc: () => L('Hits chain lightning to nearby foes', 'İsabetler yakındakilere yıldırım zinciri atar') },
     orbit: { cls: 'mage', icon: '🌀', max: 3, name: () => L('Fire Circle', 'Ateş Çemberi'), desc: () => L('Fire orbs circle around you', 'Etrafında ateş küreleri döner') },
-    vamp: { icon: '🩸', max: 3, name: () => L('Bloodthirst', 'Kan Emici'), desc: () => L('Heal on every kill', 'Her öldürmede iyileş') },
-    dodge: { icon: '💨', max: 3, name: () => L('Dodge Master', 'Kaçınma Ustası'), desc: () => L('Dodge +10%', 'Kaçınma +%10') },
-    move: { icon: '🏃', max: 2, name: () => L('Run & Gun', 'Koşarken Atış'), desc: () => L('Shoot while walking too (slower)', 'Yürürken de ateş et (daha yavaş)') },
+    vamp: { icon: '🩸', name: () => L('Bloodthirst', 'Kan Emici'), desc: () => L('Heal on every kill', 'Her öldürmede iyileş') },
+    dodge: { icon: '💨', name: () => L('Dodge Master', 'Kaçınma Ustası'), desc: () => L('Dodge +10%', 'Kaçınma +%10') },
+    move: { icon: '🏃', name: () => L('Run & Gun', 'Koşarken Atış'), desc: () => L('Shoot while walking too (slower)', 'Yürürken de ateş et (daha yavaş)') },
     rain: { cls: 'archer', icon: '🏹', max: 3, name: () => L('Arrow Rain', 'Ok Yağmuru'), desc: () => L('Arrows rain down on enemies every few seconds', 'Birkaç saniyede bir düşmanların üstüne ok yağar') },
     headshot: { cls: 'archer', icon: '🎯', max: 3, name: () => L('Headshot', 'Kafadan Vuruş'), desc: () => L('5% chance to slay a non-boss enemy outright', '%5 şansla boss olmayan düşmanı tek atışta indirir') },
     nova: { cls: 'mage', icon: '🔮', max: 3, name: () => L('Arcane Nova', 'Arkan Nova'), desc: () => L('A blast of magic bursts around you and pushes foes back', 'Etrafında büyü dalgası patlar, düşmanları iter') },
@@ -221,15 +227,14 @@
   useLoadout(G.hero);
   const heroCls = () => HEROES[(S && S.hero) || G.hero].cls;
   let S = null;
-  let frameGap = 7, costAcc = 0, costN = 0, menuSkip = false, bandN = 0;
+  let frameGap = 7, costAcc = 0, costN = 0, menuSkip = false, bandN = 0, menuHold = 0;
   let mode = 'menu', paused = false, tab = 'battle', pick = null, selChapter = G.chapter;
 
   function heroStats() {
     const h = HEROES[G.hero], st = { atk: 100, hp: 600, atkSpd: 1.25, crit: 0.05, critDmg: 1, dmg: 0, speed: 9, dodge: 0, block: 0, hpPct: 0, heal: 0, ricochet: 0, lifeKill: 0 };
     for (const it of equipped()) { const s = itemStats(it); for (const k in s) st[k] += k === 'atkSpd' ? s[k] * 1.25 : k === 'speed' ? s[k] * 9 : s[k]; }
     for (const k in h.mods) st[k] += k === 'atkSpd' ? h.mods[k] * 1.25 : h.mods[k];
-    const t = G.talents;
-    st.atk *= 1 + 0.03 * t.atk; st.hp = st.hp * (1 + st.hpPct) * (1 + 0.03 * t.hp); st.speed *= 1 + 0.02 * t.speed; st.crit += 0.01 * t.crit;
+    st.atk *= 1 + 0.03 * tal('atk'); st.hp = st.hp * (1 + st.hpPct) * (1 + 0.03 * tal('hp')); st.speed *= 1 + 0.02 * tal('speed'); st.crit += 0.01 * tal('crit');
     st.atk = Math.round(st.atk); st.hp = Math.round(st.hp);
     return st;
   }
@@ -458,7 +463,7 @@
     fx('die', e.x, e.z, e.boss ? '#ffd56a' : '#e8e0d0', e.boss ? 60 : 22); if (e.boss) S.shake = 1;
     if (e.slow > 0 && sk('ice')) fx('shatter', e.x, e.z);
     if (e.elite) { for (let k = 0; k < 8; k++) enemyShot(e, k / 8 * Math.PI * 2, 7, 'orb'); fx('nova', e.x, e.z, '#ffd23f', 1); S.fx.push({ kind: 'boom', x: e.x, z: e.z, r: 3, life: 0.4, c: '#ffd23f' }); }
-    const f = FOES[e.kind], g = Math.round(f.gold * (e.boss ? 25 : e.elite ? 3 : 1) * (1 + 0.05 * G.talents.gold) * (0.8 + Math.random() * 0.4) * Math.pow(1.15, S.chapter - 1) * (1 + 0.2 * sk('greed')));
+    const f = FOES[e.kind], g = Math.round(f.gold * (e.boss ? 25 : e.elite ? 3 : 1) * (0.8 + Math.random() * 0.4) * goldScale(S.chapter) * (1 + 0.2 * sk('greed')));
     S.drops.push({ x: e.x, z: e.z, gold: g, xp: f.xp * (e.boss ? 10 : 1), t: 0 });
     S.kills++;
     const heal = (sk('vamp') * 0.02 + S.st.lifeKill) * S.p.max;
@@ -947,7 +952,7 @@
     if (x < 0.1) { const g = { b: randBase(), r: rollRarity(S.chapter, false) }; S.items.push(g); item = { icon: icon(g.b), label: RAR[g.r].name(), sub: BASES[g.b].name(), rarity: RAR[g.r].id }; }
     else if (x < 0.35) { S.scrolls += 2; item = { icon: '📜', label: '+2', sub: L('Scrolls', 'Parşömen'), rarity: 'rare' }; }
     else if (x < 0.6) { S.p.hp = Math.min(S.p.max, S.p.hp + S.p.max * 0.35); item = { icon: '💖', label: '+35%', sub: L('Heal', 'İyileşme'), rarity: 'epic' }; }
-    else { const g = Math.round(80 * Math.pow(1.15, S.chapter - 1)); S.gold += g; item = { icon: '💰', label: '+' + goldFmt(g), sub: L('Gold', 'Altın'), rarity: 'common' }; }
+    else { const g = Math.round(80 * goldScale(S.chapter)); S.gold += g; item = { icon: '💰', label: '+' + goldFmt(g), sub: L('Gold', 'Altın'), rarity: 'common' }; }
     const done = () => { mode = 'play'; if (S.pending) levelUpScreen(); };
     if (window.Fx) Fx.reveal({ title: L('Bonus Box', 'Bonus Kutusu'), chest: 'gold', items: [item] }).then(done); else { UI.toast(item.label + ' ' + item.sub); done(); }
   }
@@ -980,8 +985,8 @@
   }
   function runRewards(win) {
     const ch = S.chapter, roomsDone = win ? roomsOf(ch) : S.room - 1, ran = roomsDone - S.from;
-    const bonus = win ? Math.round(150 * Math.pow(1.3, ch - 1) * (1 + 0.5 * (roomsOf(ch) / 10 - 1))) : 0;
-    const gold = Math.round((S.gold + bonus) * (1 + 0.05 * G.talents.gold) * PlayerLv.mul()); // player level bonus
+    const bonus = win ? winBonus(ch) : 0;
+    const gold = Math.round((S.gold + bonus) * (1 + 0.02 * tal('gold')) * PlayerLv.mul()); // Greed (once) and player level bonus
     G.gold += gold;
     const scrolls = S.scrolls + (win ? 2 : ran >= 5 ? 1 : 0), got = {};
     for (let k = 0; k < scrolls; k++) { const s = SLOTS[Math.floor(Math.random() * 4)]; G.scrolls[s]++; got[s] = (got[s] || 0) + 1; }
@@ -1136,6 +1141,9 @@
     setTimeout(() => reward({ title: sk.name() + L(' unlocked!', ' açıldı!'), items: [{ icon: '<span class="rwskin" style="--img:url(' + skinImg(k, sk.id) + ')"></span>', label: sk.name(), sub: HEROES[k].name, rarity: sk.rar }] }), 1100);
   }
   function renderMenu() {
+    // The new panel gets the next frames to itself: the 3D hero waits ~1/4 s (measured on the phone: tab switches
+    // and upgrades stalled 50-110 ms while both drew).
+    menuHold = performance.now() + 250;
     menuScene();
     $('mgold').textContent = goldFmt(G.gold); $('mstars').textContent = Kit.fmt(Save.data.coins);
     document.querySelectorAll && document.querySelectorAll('.anav').forEach(b => b.classList.toggle('on', b.dataset.tab === tab));
@@ -1179,11 +1187,12 @@
         '<p class="tip">' + L('Swipe the hero to browse', 'Karakterleri görmek için kaydır') + '</p>';
     } else if (tab === 'talent') {
       h = '<div class="talents">' + Object.keys(TALENTS).map(k => {
-        const t = TALENTS[k], level = G.talents[k], c = talentCost(k), can = G.gold >= c;
-        return '<div class="tal"><span>' + t.icon + '</span><b>' + t.name() + '</b><em>' + L('Lv.', 'Sv.') + level + '</em>' +
-          '<small>' + t.desc(level) + '</small><small>' + L('Next: ', 'Sonraki: ') + t.desc(level + 1) + '</small>' +
+        const t = TALENTS[k], level = G.talents[k], c = talentCost(k), can = G.gold >= c, max = talMax(k);
+        return '<div class="tal"><span>' + t.icon + '</span><b>' + t.name() + '</b><em>' + L('Lv.', 'Sv.') + level + '/' + max + '</em>' +
+          '<small>' + t.desc(level) + '</small>' + (level < max ? '<small>' + L('Next: ', 'Sonraki: ') + t.desc(level + 1) + '</small>' : '') +
+          (level >= max ? '<button class="btn small gray" disabled>' + L('MAX', 'MAKS') + '</button></div>' :
           '<button class="btn small ' + (can ? 'green' : 'gray') + '" data-act="talent" data-arg="' + k + '"' + (can ? '' : ' disabled') + '>' +
-          L('Upgrade', 'Geliştir') + ' · 💰 ' + goldFmt(c) + '</button></div>';
+          L('Upgrade', 'Geliştir') + ' · 💰 ' + goldFmt(c) + '</button></div>');
       }).join('') + '</div>';
     } else if (tab === 'shop') {
       const free = Date.now() >= (G.chest.free || 0);
@@ -1270,7 +1279,7 @@
       if (k === 'potion') { S.p.hp = Math.min(S.p.max, S.p.hp + S.p.max * 0.3); fx('heal', S.p.x, S.p.z, '#ff8ab0', 1); }
       if (k === 'hp' || k === 'hpS') fx('heal', S.p.x, S.p.z, '#ffcf5a', 1);
       fx('skill', S.p.x, S.p.z, k); // every skill shows its own effect when picked (render3d.js SKILL_FX)
-      const heal = 0.02 * G.talents.heal * S.p.max; if (heal) S.p.hp = Math.min(S.p.max, S.p.hp + heal);
+      const heal = 0.02 * tal('heal') * S.p.max; if (heal) S.p.hp = Math.min(S.p.max, S.p.hp + heal);
       closeOverlay(); mode = 'play';
       if (S.pending) levelUpScreen();
     },
@@ -1349,7 +1358,7 @@
       reward({ title: HEROES[k].name + L(' joined!', ' katıldı!'), items: [{ icon: HEROES[k].icon, label: HEROES[k].name, sub: HEROES[k].passive(), rarity: 'epic' }] });
     },
     talent(k) {
-      if (!Object.prototype.hasOwnProperty.call(TALENTS, k)) return;
+      if (!Object.prototype.hasOwnProperty.call(TALENTS, k) || G.talents[k] >= talMax(k)) return;
       const c = talentCost(k);
       if (G.gold < c) { UI.toast(L('Not enough gold', 'Yetersiz altın')); return; }
       G.gold -= c;
@@ -1427,10 +1436,28 @@
     if (hudCache.lv !== lv) { hudCache.lv = lv; $('xplv').textContent = lv; }
     if (hudCache.gd !== gd) { hudCache.gd = gd; $('rgold').textContent = gd; }
   }
+  // Outlined labels (damage numbers, HP, boss name) are rendered once per text/size/colour into a small canvas and
+  // then blitted: strokeText + fillText for every label every frame was one of the top costs on the phone.
+  const textCache = new Map();
+  function textImg(t, size, fill, stroke) {
+    const k = t + '|' + size + '|' + fill + '|' + stroke;
+    let c = textCache.get(k);
+    if (c) { textCache.delete(k); textCache.set(k, c); return c; } // keep recently used ones at the end (LRU)
+    const font = '800 ' + size + 'px ' + FONT, lw = Math.max(3, size * 0.25), s = dpr;
+    ctx.font = font;
+    const w = Math.ceil(ctx.measureText(t).width + lw * 2 + 4), h = Math.ceil(size * 1.5 + lw * 2);
+    c = document.createElement('canvas'); c.width = Math.ceil(w * s); c.height = Math.ceil(h * s); c.w = w; c.h = h;
+    const g = c.getContext('2d'); g.scale(s, s);
+    g.font = font; g.textAlign = 'center'; g.textBaseline = 'middle'; g.lineJoin = 'round'; g.lineWidth = lw;
+    g.strokeStyle = stroke; g.strokeText(t, w / 2, h / 2); g.fillStyle = fill; g.fillText(t, w / 2, h / 2);
+    textCache.set(k, c);
+    if (textCache.size > 160) textCache.delete(textCache.keys().next().value);
+    return c;
+  }
   function text(t, x, y, size, fill, stroke) {
-    ctx.font = '800 ' + size + 'px ' + FONT; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-    ctx.lineJoin = 'round'; ctx.lineWidth = Math.max(3, size * 0.25); ctx.strokeStyle = stroke || '#1b1464'; ctx.strokeText(t, x, y);
-    ctx.fillStyle = fill || '#fff'; ctx.fillText(t, x, y);
+    // Sizes snap to whole pixels (the pop-in animation would otherwise make a new image every frame).
+    const c = textImg(t, Math.max(6, Math.round(size)), fill || '#fff', stroke || '#1b1464');
+    ctx.drawImage(c, x - c.w / 2, y - c.h / 2, c.w, c.h);
   }
   function bar(x, y, w, h, f, c) {
     ctx.fillStyle = 'rgba(0,0,0,.55)'; ctx.fillRect(x - w / 2 - 1, y - 1, w + 2, h + 2);
@@ -1440,17 +1467,17 @@
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     if (!S || SHOT) return;
     const p = S.p;
-    // Vignette; the edges flash red when the hero is hit.
-    const vg = ctx.createRadialGradient(innerWidth / 2, innerHeight / 2, innerHeight * 0.32, innerWidth / 2, innerHeight / 2, innerHeight * 0.78);
-    vg.addColorStop(0, 'rgba(0,0,0,0)'); vg.addColorStop(1, S.hurtT > 0 ? 'rgba(210,0,30,' + (0.3 + S.hurtT).toFixed(2) + ')' : 'rgba(0,0,0,.5)');
-    ctx.fillStyle = vg; ctx.fillRect(0, 0, innerWidth, innerHeight);
+    // The edges flash red when the hero is hit: a CSS layer (#hurt) whose opacity follows hurtT. The dark lens
+    // vignette is body::after. Both used to be a full-screen canvas gradient painted every frame.
+    const ha = S.hurtT > 0 ? Math.min(1, 0.45 + S.hurtT * 1.4).toFixed(2) : '0';
+    if (hudCache.hurt !== ha) { hudCache.hurt = ha; $('hurt').style.opacity = ha; }
     for (const e of S.enemies) {
       if (e.hp <= 0 || e.state === 'rise' || e.boss) continue;
       const q = W2S(e.x, e.z, 2.9 * e.scale * (e.scale > 2 ? 1.2 : 1.5));
       bar(q.x, q.y, 34, 4, e.hp / e.max, '#ff4d5a');
       // Status icons over the bar (Soul Knight / Archero): burning, frozen, shocked, poisoned.
       const ic = (e.burn > 0 ? '🔥' : '') + (e.slow > 0 ? '❄️' : '') + (e.shock > 0 ? '⚡' : '') + (e.psn > 0 ? '☠️' : '');
-      if (ic) { ctx.font = '11px sans-serif'; ctx.textAlign = 'left'; ctx.textBaseline = 'middle'; ctx.fillText(ic, q.x + 19, q.y + 2); }
+      if (ic) { const c = textImg(ic, 11, '#fff', 'rgba(0,0,0,.35)'); ctx.drawImage(c, q.x + 19, q.y + 2 - c.h / 2, c.w, c.h); }
     }
     const q = W2S(p.x, p.z, 4.3);
     bar(q.x, q.y, 46, 6, p.hp / p.max, '#3be07a');
@@ -1521,7 +1548,7 @@
         if (bar && card && bar.getBoundingClientRect) R3.band = { top: (bar.getBoundingClientRect().bottom + 8) / H, bot: (card.getBoundingClientRect().top - 4) / H };
       }
       // The menu only shows an idle hero: draw it at half rate so the DOM panels below stay smooth.
-      if (mode === 'menu' && (menuSkip = !menuSkip)) { /* skip this frame */ } else
+      if (mode === 'menu' && ((menuSkip = !menuSkip) || t < menuHold)) { /* skip this frame */ } else
       R3.render(S, mode === 'art' ? 0 : dt, mode === 'art' ? 'play' : mode);
       if (mode === 'play') { costAcc += performance.now() - r0; costN++; if (costN >= 120) { if (costAcc / costN > 6) frameGap = 15; costAcc = 0; costN = 0; } }
       ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.clearRect(0, 0, cvs.width, cvs.height);

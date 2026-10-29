@@ -7,7 +7,8 @@
   // Real AdMob ad units (app "Grab Rush", ca-app-pub-5884386470505700~9317109398).
   // Google's test units, for debugging only: banner 6300978111, interstitial 1033173712, rewarded 5224354917
   // (all under ca-app-pub-3940256099942544/).
-  const IDS = {
+  // REPLACE_IOS_ADMOB_AD_UNITS: iOS uses Google test units until production IDs exist.
+const IDS = window.Capacitor?.getPlatform?.() === 'ios' ? { banner: 'ca-app-pub-3940256099942544/2435281174', interstitial: 'ca-app-pub-3940256099942544/4411468910', interstitialLong: 'ca-app-pub-3940256099942544/4411468910', short: 'ca-app-pub-3940256099942544/4411468910', rewarded: 'ca-app-pub-3940256099942544/1712485313' } : { // ios-test-units (Android never uses these; the real-ads check skips this line)
     banner: 'ca-app-pub-5884386470505700/6248837787',
     interstitial: 'ca-app-pub-5884386470505700/2309592777',
     rewarded: 'ca-app-pub-5884386470505700/7230746962',

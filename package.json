@@ -10,7 +10,8 @@
     "open": "npx cap open android",
     "apk": "npm run sync && cd android && .\\gradlew.bat assembleDebug",
     "apk-release": "npm run sync && cd android && .\\gradlew.bat assembleRelease",
-    "aab": "npm run sync && cd android && .\\gradlew.bat bundleRelease"
+    "aab": "npm run sync && cd android && .\\gradlew.bat bundleRelease",
+    "assets:ios": "npx --yes --package=@capacitor/assets@3.0.5 capacitor-assets generate --ios --assetPath assets-ios"
   },
   "dependencies": {
     "@capacitor-community/admob": "^8.1.0",
@@ -18,7 +19,8 @@
     "@capacitor/app": "^8.1.1",
     "@capacitor/core": "^8.5.2",
     "@capawesome/capacitor-app-update": "^8.1.0",
-    "cordova-plugin-purchase": "^13.18.0"
+    "cordova-plugin-purchase": "^13.18.0",
+    "@capacitor/ios": "8.5.2"
   },
   "devDependencies": {
     "@capacitor/cli": "^8.5.2",

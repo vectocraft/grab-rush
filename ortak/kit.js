@@ -202,15 +202,29 @@
   'use strict';
   const SEL = '.lvl-chip, .mtitle, .ctext b, .roomchip, .mapc b, .pxp b, .btn, .hname, .ubtn .nm, .sktile b';
   const MIN = 9;
-  function fit(el) {
-    const key = el.textContent + '|' + (el.parentNode ? el.parentNode.clientWidth : 0);
-    if (el._fitKey === key && el.scrollWidth <= el.clientWidth + 1) return;
-    el._fitKey = key;
-    el.style.removeProperty('font-size');
-    if (!el.clientWidth) return;
-    let size = parseFloat(getComputedStyle(el).fontSize);
-    // 'important' so a stylesheet font-size with !important cannot undo the fit.
-    while (el.scrollWidth > el.clientWidth + 1 && size > MIN) { size -= 1; el.style.setProperty('font-size', size + 'px', 'important'); }
+  // Batched: all reads of a pass first, then all writes, so a new panel with 30 buttons costs a few layouts instead
+  // of one forced layout per button per pixel step (measured on the phone: most of a menu tab switch).
+  const over = el => el.scrollWidth > el.clientWidth + 1;
+  function fitAll(els) {
+    const todo = [];
+    for (const el of els) {
+      const key = el.textContent + '|' + (el.parentNode ? el.parentNode.clientWidth : 0);
+      if (el._fitKey === key && !over(el)) continue;
+      el._fitKey = key; todo.push(el);
+    }
+    if (!todo.length) return;
+    todo.forEach(el => el.style.removeProperty('font-size'));
+    let live = todo.filter(el => el.clientWidth && over(el)).map(el => ({ el, size: parseFloat(getComputedStyle(el).fontSize) }));
+    // Text width scales with font size: jump straight to the ratio, then correct in at most 3 batched 1 px steps.
+    for (let pass = 0; pass < 4 && live.length; pass++) {
+      for (const o of live) {
+        const next = pass ? o.size - 1 : Math.floor(o.size * (o.el.clientWidth / o.el.scrollWidth));
+        o.size = Math.max(MIN, Math.min(o.size - 1, next));
+        // 'important' so a stylesheet font-size with !important cannot undo the fit.
+        o.el.style.setProperty('font-size', o.size + 'px', 'important');
+      }
+      live = live.filter(o => o.size > MIN && over(o.el));
+    }
   }
   // Only labels touched by a DOM change are re-measured: games rewrite HUD numbers every frame, and re-fitting
   // every button on the page each frame (forced layout) cost Age Wars most of its frame time on the phone.
@@ -218,8 +232,8 @@
   const dirty = new Set();
   function run() {
     queued = false;
-    if (full) { full = false; dirty.clear(); document.querySelectorAll(SEL).forEach(fit); return; }
-    dirty.forEach(el => { if (el.isConnected) fit(el); }); dirty.clear();
+    if (full) { full = false; dirty.clear(); fitAll(document.querySelectorAll(SEL)); return; }
+    const els = [...dirty].filter(el => el.isConnected); dirty.clear(); fitAll(els);
   }
   function queue() { if (!queued) { queued = true; requestAnimationFrame(run); } }
   const queueAll = () => { full = true; queue(); };

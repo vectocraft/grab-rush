@@ -81,7 +81,11 @@
       try { renderer = new T.WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance', alpha: !!(opts && opts.alpha), preserveDrawingBuffer: !!(opts && opts.alpha) }); } catch (e) { return null; }
       if (!renderer.getContext()) return null;
       // Sharp characters: render close to the screen's real resolution (the adaptive step below drops shadows first).
-      let pr = Math.min(1.75, window.devicePixelRatio || 1); renderer.setPixelRatio(pr);
+      // Pixel ratio: the adaptive step-down below remembers its result per device, so the next launch starts there
+      // instead of stuttering for the first seconds again.
+      let savedPr = 0; try { savedPr = +localStorage.getItem('arrow_pr') || 0; } catch (e) { }
+      let pr = Math.min(savedPr || 1.75, 1.75, window.devicePixelRatio || 1); renderer.setPixelRatio(pr);
+      const keepPr = () => { try { localStorage.setItem('arrow_pr', String(pr)); } catch (e) { } };
       const maxAniso = renderer.capabilities.getMaxAnisotropy ? renderer.capabilities.getMaxAnisotropy() : 1;
       if ('outputColorSpace' in renderer) renderer.outputColorSpace = T.SRGBColorSpace;
       renderer.toneMapping = T.ACESFilmicToneMapping; renderer.toneMappingExposure = 1.1;
@@ -483,24 +487,30 @@
         g.setAttribute('position', new T.BufferAttribute(pos, 3)); g.setAttribute('color', new T.BufferAttribute(col, 3));
         const pts = new T.Points(g, new T.PointsMaterial(Object.assign({ size, map: dotTex, vertexColors: true, sizeAttenuation: true }, add)));
         pts.frustumCulled = false; scene.add(pts);
-        return { pts, pos, col, n, p: Array.from({ length: n }, () => ({ life: 0 })), i: 0 };
+        return { pts, pos, col, n, p: Array.from({ length: n }, () => ({ life: 0 })), i: 0, live: true }; // live: the first step parks every particle
       }
       const sparks = cloud(1200, 0.8), puffs = cloud(260, 2.6), flamesC = cloud(500, 1.9);
       const tmpC = new T.Color();
       function emit(c, x, y, z, vx, vy, vz, life, color, grav) {
         const q = c.p[c.i]; c.i = (c.i + 1) % c.n;
-        Object.assign(q, { x, y, z, vx, vy, vz, life, max: life, grav: grav || 0 });
+        Object.assign(q, { x, y, z, vx, vy, vz, life, max: life, grav: grav || 0, dead: false }); c.live = true;
         tmpC.set(color); q.r = tmpC.r; q.g = tmpC.g; q.b = tmpC.b;
       }
+      // Idle clouds cost nothing: dead particles are parked once, and a cloud with nothing alive skips the loop and
+      // the buffer upload (1200+260+500 particles were walked and re-uploaded every frame).
       function stepCloud(c, dt) {
+        if (!c.live) return;
+        let live = false;
         for (let k = 0; k < c.n; k++) {
           const q = c.p[k], o = k * 3;
-          if (q.life <= 0) { c.pos[o + 1] = -999; continue; }
+          if (q.life <= 0) { if (!q.dead) { q.dead = true; c.pos[o + 1] = -999; } continue; }
+          live = true;
           q.life -= dt; q.vy -= q.grav * dt; q.x += q.vx * dt; q.y += q.vy * dt; q.z += q.vz * dt;
           if (q.y < 0.05 && q.grav) { q.y = 0.05; q.vy *= -0.3; q.vx *= 0.6; q.vz *= 0.6; }
           const a = Math.max(0, q.life / q.max);
           c.pos[o] = q.x; c.pos[o + 1] = q.y; c.pos[o + 2] = q.z; c.col[o] = q.r * a; c.col[o + 1] = q.g * a; c.col[o + 2] = q.b * a;
         }
+        c.live = live;
         c.pts.geometry.attributes.position.needsUpdate = true; c.pts.geometry.attributes.color.needsUpdate = true;
       }
       const rnd = (a, b) => a + Math.random() * (b - a);
@@ -842,9 +852,16 @@
       // ---------- Room ----------
       function placeInst(key, list, fit) {
         const g = propGeo(key), m = new T.InstancedMesh(g, propMatI, list.length), d = new T.Object3D();
-        m.customDepthMaterial = instDepth; m.receiveShadow = true; m.castShadow = !/^floor/.test(key);
+        // Floors and walls cast no shadow: walls are ~1.5-2k triangles x ~44 per room and their shadows land
+        // outside the arena (the shadow pass drew them all again on every shadow update).
+        m.customDepthMaterial = instDepth; m.receiveShadow = true; m.castShadow = !/^(floor|wall)/.test(key);
         list.forEach((o, i) => { d.position.set(o[0], o[1] || 0, o[2]); d.rotation.set(0, o[3] || 0, 0); d.scale.setScalar(o[4] || fit || 1); d.updateMatrix(); m.setMatrixAt(i, d.matrix); });
         m.instanceMatrix.needsUpdate = true; room.add(m); return m;
+      }
+      // Static room pieces (instanced walls/floors/deco, obstacles, the door) never move: compute their matrices once
+      // instead of on every frame (updateMatrixWorld/compose were a visible part of the frame on the phone).
+      function freezeStatic() {
+        for (const o of room.children) if (o.isInstancedMesh || (o.isMesh && (o.material === propMat || o.material === propMatI))) { o.updateMatrix(); o.matrixAutoUpdate = false; }
       }
       function flame(x, y, z, c) {
         const s = new T.Sprite(new T.SpriteMaterial(Object.assign({ map: glowTex, color: c || '#ffae4a' }, add)));
@@ -1088,6 +1105,7 @@
       // past the room's front edge or far above the back wall, so no empty band appears on tall screens.
       const HALF_W = 10.4, PITCH = 45 * Math.PI / 180; // lower than straight-down so heads and hats do not hide the bodies
       let camX = 0, camZ = 0, camD = 0, zLo = 0, zHi = 0, camKey = '';
+      let cssW = innerWidth, cssH = innerHeight; // canvas CSS size, refreshed by fit() (reading it per frame forced a layout)
       const v3 = new T.Vector3();
       function placeCam(x, z) {
         camera.position.set(x, Math.sin(PITCH) * camD, z + Math.cos(PITCH) * camD + 2);
@@ -1095,7 +1113,7 @@
         camera.updateMatrixWorld();
       }
       function camLimits() {
-        const W = canvas.clientWidth || innerWidth, H = canvas.clientHeight || innerHeight;
+        const W = cssW, H = cssH;
         camD = HALF_W / Math.tan(Math.atan(Math.tan(camera.fov * Math.PI / 360) * W / H));
         // Screen y (0 top .. 1 bottom) of a world point for a given camZ; both limits are found by bisection.
         const screenY = (z, h, cz) => { placeCam(0, cz); v3.set(0, h, z).project(camera); return (1 - v3.y) / 2; };
@@ -1106,7 +1124,7 @@
         camKey = W + 'x' + H;
       }
       function camRoom(S, dt) {
-        const W = canvas.clientWidth || innerWidth, H = canvas.clientHeight || innerHeight;
+        const W = cssW, H = cssH;
         if (camKey !== W + 'x' + H) camLimits();
         const tx = S ? Math.max(-(RW + 1 - HALF_W), Math.min(RW + 1 - HALF_W, S.p.x * 0.5)) : 0;
         // Once the room is clear the camera leans toward the door so the way out is on screen.
@@ -1187,10 +1205,11 @@
           return canvas.toDataURL('image/png');
         },
         mem() { return Object.assign({ floors: floorCache.size }, renderer.info.memory); }, // test hook: GPU objects alive
+        dbg: () => ({ room, scene, camera, renderer, T }), // test hook: scene access for headless checks
         is3D: true,
-        fit() { const W = canvas.clientWidth || innerWidth, H = canvas.clientHeight || innerHeight; renderer.setSize(W, H, false); camera.aspect = W / H; camera.updateProjectionMatrix(); camKey = ''; },
-        project(x, z, h) { v3.set(x, h || 0, z).project(camera); const W = canvas.clientWidth || innerWidth, H = canvas.clientHeight || innerHeight; return { x: (v3.x + 1) / 2 * W, y: (1 - v3.y) / 2 * H }; },
-        setRoom(S, ch) { level = S; menuKey = ''; buildRoom(S, ch); if (F3 && !F3.warmed) { F3.warmed = true; F3.warm(S.p.x, 1.3, S.p.z); warmV2(S); } },
+        fit() { const W = cssW = canvas.clientWidth || innerWidth, H = cssH = canvas.clientHeight || innerHeight; renderer.setSize(W, H, false); camera.aspect = W / H; camera.updateProjectionMatrix(); camKey = ''; },
+        project(x, z, h) { v3.set(x, h || 0, z).project(camera); const W = cssW, H = cssH; return { x: (v3.x + 1) / 2 * W, y: (1 - v3.y) / 2 * H }; },
+        setRoom(S, ch) { level = S; menuKey = ''; buildRoom(S, ch); freezeStatic(); if (F3 && !F3.warmed) { F3.warmed = true; F3.warm(S.p.x, 1.3, S.p.z); warmV2(S); } },
         setMenu(hero, ch, tint, dim, skin) { const k = hero + (tint || '') + (dim ? 'd' : '') + (skin ? skin.id : '') + ch.fog + (ch.th ? ch.th.wall + ch.th.fx : ''); if (k === menuKey) return; menuKey = k; level = null; buildMenu(hero, ch, tint, dim, skin); },
         // Outfit put on: the menu hero hops and spins in a burst of the outfit's colours.
         celebrate() {
@@ -1208,11 +1227,13 @@
             if (perfAcc > 2.5) {
               const avg = perfAcc / perfN; perfAcc = 0; perfN = 0;
               // Shadows go to every 3rd frame instead of off: switching them off recompiles every shader (a long freeze).
-              // Steps, cheapest-looking first: 1.75 → 1.5 pixel ratio under ~52 fps (hard to see on a phone), shadows
-              // every 3rd frame under ~45 fps, 1.25 pixel ratio under ~38 fps. Effects and models are never cut.
-              if (avg > 1 / 52 && pr > 1.5) { pr = Math.max(1.5, pr - 0.25); renderer.setPixelRatio(pr); R.fit(); }
-              else if (avg > 1 / 45 && renderer.shadowMap.autoUpdate) { renderer.shadowMap.autoUpdate = false; slowShadows = true; }
-              else if (avg > 1 / 38 && pr > 1.25) { pr = 1.25; renderer.setPixelRatio(pr); R.fit(); }
+              // Steps, cheapest-looking first, whenever frames miss 60 fps (avg under ~56 fps): pixel ratio 1.75 → 1.5 → 1.25
+              // (hard to see on a phone), then shadows every 3rd frame, then pixel ratio 1.1. Measured on a mid-range
+              // phone (Oppo CPH2205): the GPU is fill-bound; at 1.5 it ran 52 fps with 15% slow frames - just above the
+              // old 52 fps trigger, so it never stepped down - and at 1.25 58 fps with 4%. Effects and models are never cut.
+              if (avg > 1 / 56 && pr > 1.25) { pr = Math.max(1.25, pr - 0.25); renderer.setPixelRatio(pr); R.fit(); keepPr(); }
+              else if (avg > 1 / 50 && renderer.shadowMap.autoUpdate) { renderer.shadowMap.autoUpdate = false; slowShadows = true; }
+              else if (avg > 1 / 45 && pr > 1.1) { pr = 1.1; renderer.setPixelRatio(pr); R.fit(); keepPr(); }
               // V3: still slow at the lowest step -> the purely atmospheric extras (weather, mist sheets) go.
               else if (avg > 1 / 34 && !lowFxA) { lowFxA = true; fogSheets.forEach(m => { m.visible = false; }); }
             }
@@ -1286,7 +1307,7 @@
             dyn.visible = false;
             // Frame the whole hero (and the dais) inside a band of the screen between the top bar and the chapter
             // card, whatever the phone's aspect: solve the distance, then shift the image up with a view offset.
-            const W = canvas.clientWidth || innerWidth, H = canvas.clientHeight || innerHeight, tf = Math.tan(camera.fov * Math.PI / 360);
+            const W = cssW, H = cssH, tf = Math.tan(camera.fov * Math.PI / 360);
             const band = R.band || { top: 0.14, bot: 0.5 }, bot = Math.max(band.top + 0.18, band.bot - 0.02), top = Math.max(band.top, bot - 0.4), mid = 2.9;
             const d = Math.max(6.2 / (2 * tf * (bot - top)), 8 / (2 * tf * camera.aspect)), pitch = 0.16;
             camera.position.set(0, mid + Math.sin(pitch) * d, Math.cos(pitch) * d); camera.lookAt(0, mid, 0);
@@ -1300,7 +1321,7 @@
           const seen = new Set();
           const sync = (key, e, name, scale, isHero) => {
             let g = ents.get(key);
-            if (!g) { g = charMesh(name, VS(scale) * (isHero || (e && e.boss) ? 1 : 1.12)); /* foes a little bigger: bolder silhouettes (art target) */ if (isHero && S.skin) dress(g, name, S.skin); if (!isHero && e.boss) { dress(g, name, bossLook(e)); bossRig(g, e); } if (isHero && S.heroTint) { g.userData.m.material.color.set(S.heroTint); g.userData.m.material.emissive && g.userData.m.material.emissive.set(S.heroTint).multiplyScalar(0.38); } dyn.add(g); ents.set(key, g); }
+            if (!g) { g = charMesh(name, VS(scale) * (isHero ? 1 : e && e.boss ? 0.75 : 0.6)); /* foes drawn about half their old size (testers: they filled the room); hit circles unchanged */ if (isHero && S.skin) dress(g, name, S.skin); if (!isHero && e.boss) { dress(g, name, bossLook(e)); bossRig(g, e); } if (isHero && S.heroTint) { g.userData.m.material.color.set(S.heroTint); g.userData.m.material.emissive && g.userData.m.material.emissive.set(S.heroTint).multiplyScalar(0.38); } dyn.add(g); ents.set(key, g); }
             seen.add(key);
             const m = g.userData.m;
             if (isHero) heroPose(m, e); else foePose(m, e);

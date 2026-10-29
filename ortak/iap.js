@@ -93,15 +93,16 @@
   async function init() {
     const C = window.CdvPurchase;
     if (!C) return;
-    store = C.store;
-    store.register(ALL.map(id => ({ id, type: NON_CONSUMABLE.includes(id) ? C.ProductType.NON_CONSUMABLE : C.ProductType.CONSUMABLE, platform: C.Platform.GOOGLE_PLAY })));
+    const platform = window.Capacitor?.getPlatform?.() === 'ios' ? C.Platform.APPLE_APPSTORE : C.Platform.GOOGLE_PLAY;
+  store = C.store;
+    store.register(ALL.map(id => ({ id, type: NON_CONSUMABLE.includes(id) ? C.ProductType.NON_CONSUMABLE : C.ProductType.CONSUMABLE, platform })));
     store.when()
       .approved(t => t.verify())
       .verified(r => r.finish())
       .finished(t => { t.products.forEach(p => grant(p.id)); })
       .productUpdated(p => { if (NON_CONSUMABLE.includes(p.id) && p.owned) grant(p.id); });
     store.error(e => console.warn('[iap]', e && e.message));
-    await store.initialize([C.Platform.GOOGLE_PLAY]);
+    await store.initialize([platform]);
     ready = true;
     for (const id of NON_CONSUMABLE) { const p = store.get(id); if (p && p.owned) grant(id); }
     document.dispatchEvent(new Event('iapready'));

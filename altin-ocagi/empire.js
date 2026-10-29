@@ -49,6 +49,18 @@
   };
   const NPC_NAMES = L('Black Rock|Fox Camp|Wolf Den|Steep Hill|Thorn Village|Wild Camp|Stone Tower|Red Tent|Misty Vale|Grey Barrow|Old Fort|Windy Camp', 'Kara Kaya|Tilki Obası|Kurt Yuvası|Sarp Tepe|Dikenli Köy|Yaban Obası|Taş Kule|Kızıl Çadır|Sisli Vadi|Boz Kurgan|Eski Hisar|Rüzgârlı Oba').split('|');
   const BARB = L('Barbarians', 'Barbarlar');
+  // Barbarian fortresses (tester request G-22: big armies had nothing worth fighting). Six strongholds, far bigger
+  // than the villages, taken in order. Each one that falls pays a treasure (hours of income, iron, stars) and a
+  // permanent empire-wide bonus that stacks with the oases. They are never conquered, only brought down.
+  const FORTS = [
+    { name: L('Fortress I · Stone Gate', 'Kale I · Taş Kapı'), troops: 3e3, wall: 10, hours: 2, stars: 10, bonus: ['nakit', 0.10], desc: L('income +10% in all villages', 'tüm köylerde gelir +%10') },
+    { name: L('Fortress II · Wolf Tower', 'Kale II · Kurt Burcu'), troops: 12e3, wall: 12, hours: 4, stars: 20, bonus: ['demir', 0.25], desc: L('iron production +25% in all villages', 'tüm köylerde demir üretimi +%25') },
+    { name: L('Fortress III · Red Citadel', 'Kale III · Kızıl Hisar'), troops: 40e3, wall: 14, hours: 8, stars: 30, bonus: ['cevher', 0.15], desc: L('mine floor production +15% in all villages', 'tüm köylerde maden katı üretimi +%15') },
+    { name: L('Fortress IV · Iron Keep', 'Kale IV · Demir Kale'), troops: 100e3, wall: 16, hours: 12, stars: 40, bonus: ['hiz', 0.15], desc: L('elevator and transport +15% speed', 'asansör ve taşıma +%15 hız') },
+    { name: L('Fortress V · Eagle\'s Nest', 'Kale V · Kartal Yuvası'), troops: 250e3, wall: 18, hours: 24, stars: 60, bonus: ['damar', 0.15], desc: L('opening and upgrading floors ~13% cheaper', 'kat açma ve yükseltme ~%13 ucuz') },
+    { name: L('Fortress VI · Barbarian Khan\'s Palace', 'Kale VI · Barbar Hanı Sarayı'), troops: 600e3, wall: 20, hours: 48, stars: 100, bonus: ['nakit', 0.25], desc: L('income +25% in all villages', 'tüm köylerde gelir +%25') },
+  ];
+  const ROMAN = ['I', 'II', 'III', 'IV', 'V', 'VI'];
 
   let A = null;           // api from game.js
   let dirty = true, selTile = null, send = null, lastSec = 0, V3 = null, v3size = '';
@@ -61,7 +73,8 @@
   function dur(ms) {
     const s = Math.max(0, Math.ceil(ms / 1000)), h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), x = s % 60;
     const d = Math.floor(h / 24);
-    if (d) return d + L('d ', 'g ') + String(h % 24).padStart(2, '0') + ':' + String(m).padStart(2, '0') + ':' + String(x).padStart(2, '0');
+    // Multi-day times (big troop queues) drop the seconds so they fit the narrow timer columns.
+    if (d) return d + L('d ', 'g ') + (h % 24) + L('h', 'sa');
     return h ? h + ':' + String(m).padStart(2, '0') + ':' + String(x).padStart(2, '0') : m + ':' + String(x).padStart(2, '0');
   }
   function rng(seed) { return () => { seed = (seed * 16807) % 2147483647; return (seed - 1) / 2147483646; }; }
@@ -137,7 +150,12 @@
   // Iron per second of a village.
   // 1/s base + the blacksmith on top (Lv.1 ≈ 1.7/s, Lv.10 ≈ 12/s, Lv.20 ≈ 36/s): a militia (30 iron) every few seconds.
   const ironRate = k => { const l = lvlOf('demirci', k); return (1 + 0.65 * l * Math.pow(1.05, l)) * oasisMul('demir', k); };
-  function oasisMul(kind, k) { if (!A || !V(k) || !V(k).oases) return 1; return 1 + 0.25 * V(k).oases.filter(o => o.kind === kind).length; }
+  // Oases work for their own village; fallen fortresses (G().trophy) add an empire-wide bonus of the same kind.
+  function oasisMul(kind, k) {
+    const trophy = (A && A.G && A.G.trophy && A.G.trophy[kind]) || 0;
+    const own = A && V(k) && V(k).oases ? V(k).oases.filter(o => o.kind === kind).length : 0;
+    return (1 + 0.25 * own) * (1 + trophy);
+  }
   const expSlots = k => Math.floor(lvlOf('kosk', k) / 10);
   const oasisSlots = k => Math.floor(lvlOf('kosk', k) / 5);
   const cashBuildings = k => V(k).slots.filter(s => s && BUILD[s.t].prod === 'cash');
@@ -164,8 +182,27 @@
       for (let y = -WORLD_R; y <= WORLD_R; y++) for (let x = -WORLD_R; x <= WORLD_R; x++) if (Math.abs(x) > r0 || Math.abs(y) > r0) genTile(g.world.tiles, x, y, r);
       g.world.r = WORLD_R;
     }
+    if (!g.world.forts) placeForts(g.world);
     return g.world;
   }
+  // One fortress per ring, further out for each tier; it may replace an ordinary barbarian village, never an oasis.
+  function placeForts(w) {
+    const r = rng(Math.floor(Math.random() * 1e9) + 3);
+    FORTS.forEach((F, i) => {
+      const rad = 4 + i * 2.6;
+      for (let tries = 0; tries < 300; tries++) {
+        const a = r() * Math.PI * 2, x = Math.round(Math.cos(a) * rad), y = Math.round(Math.sin(a) * rad), key = x + ',' + y, t = w.tiles[key];
+        if (Math.abs(x) > WORLD_R || Math.abs(y) > WORLD_R || villageAt(x, y) >= 0 || (t && (t.type !== 'npc' || t.fort))) continue;
+        w.tiles[key] = fortTile(i);
+        break;
+      }
+    });
+    w.forts = 1;
+  }
+  const fortTile = i => ({ type: 'npc', fort: i + 1, name: FORTS[i].name, s: 10 + 5 * i, loyal: 100, def: fortArmy(i), wall: FORTS[i].wall, stash: 0, iron: 0, last: now() });
+  function fortArmy(i) { const n = FORTS[i].troops; return { milis: Math.round(n * 0.35), mizrak: Math.round(n * 0.35), hafif: Math.round(n * 0.15), agir: Math.round(n * 0.15) }; }
+  // Fortresses fall in order: the next one opens when the previous is down.
+  const fortOpen = n => n <= (G().fortsDown || 0) + 1;
   // Every village gets at least 2 oases (one working on the mine) and 2 barbarian villages within 3 tiles.
   function ensureNear(v) {
     const w = world(), r = Math.random, near = [];
@@ -200,6 +237,12 @@
     const el = (now() - t.last) / 60000;
     if (el < 0.5) return;
     t.last = now();
+    if (t.fort) { // a fortress refills its garrison slowly (0.3% a minute), so it can be worn down over several attacks
+      if (t.fallen) return;
+      const max = fortArmy(t.fort - 1);
+      for (const k in max) t.def[k] = Math.min(max[k], (t.def[k] || 0) + max[k] * 0.003 * el);
+      return;
+    }
     if (t.type === 'npc') {
       const max = npcArmy(t.s);
       for (const k in max) t.def[k] = Math.min(max[k], (t.def[k] || 0) + max[k] * 0.02 * el);
@@ -302,6 +345,7 @@
       } else { tile.animals = Math.max(0, animals * (1 - f.defLoss)); report(L('Oasis attack failed', 'Vaha saldırısı başarısız'), false, [L('Attack ', 'Saldırı ') + fmt(f.atk) + L(' / defense ', ' / savunma ') + fmt(f.def)], { from: src, to: OASIS[tile.kind].name, att: m.troops, attLost: m.troops, animals: Math.round(tile.pow * animals) }); }
       return;
     }
+    if (tile.fort) return fortBattle(m, tile, src);
     // Barbarian village.
     const f = fight(m.troops, tile.def, 0, tile.wall), defBefore = Object.assign({}, tile.def);
     const surv = applyLoss(m.troops, f.attLoss);
@@ -334,6 +378,34 @@
     battle.loyal = tile.loyal;
     report(L(tile.name + ' raided', tile.name + ' yağmalandı'), true, lines, battle);
     back(m, surv, cash, iron);
+  }
+  // A failed attack still kills part of the garrison, so a fortress can be worn down; a won one brings it down.
+  function fortBattle(m, tile, src) {
+    const F = FORTS[tile.fort - 1];
+    if (tile.fallen || !fortOpen(tile.fort)) { back(m, m.troops, 0, 0); return; }
+    const f = fight(m.troops, tile.def, 0, tile.wall), defBefore = Object.assign({}, tile.def);
+    const surv = applyLoss(m.troops, f.attLoss);
+    tile.def = applyLoss(tile.def, f.defLoss);
+    const battle = { from: src, to: tile.name + ' (' + m.x + '|' + m.y + ')', att: m.troops, attLost: lost(m.troops, surv), def: defBefore, defLost: lost(defBefore, tile.def), wall: tile.wall };
+    const head = L('Attack ', 'Saldırı ') + fmt(f.atk) + L(' / defense ', ' / savunma ') + fmt(f.def);
+    if (!f.win) {
+      report(L('Attack on ' + tile.name + ' failed', tile.name + ' saldırısı başarısız'), false, [head, L('All troops lost', 'Tüm birlikler kayboldu'), L('Garrison losses: ' + Math.round(f.defLoss * 100) + '% (it refills slowly)', 'Kale garnizonu kaybı: %' + Math.round(f.defLoss * 100) + ' (yavaş toparlanır)')], battle);
+      return;
+    }
+    const g = G();
+    tile.fallen = true; tile.def = {};
+    g.fortsDown = Math.max(g.fortsDown || 0, tile.fort);
+    g.trophy = g.trophy || {};
+    g.trophy[F.bonus[0]] = (g.trophy[F.bonus[0]] || 0) + F.bonus[1];
+    const cash = (m.income || 0) * 3600 * F.hours, iron = 4000 * tile.fort * tile.fort;
+    Save.addCoins(F.stars);
+    battle.loot = { cash, iron };
+    report('🏰 ' + L(tile.name + ' has fallen!', tile.name + ' düştü!'), true, [head, L('Losses: ' + Math.round(f.attLoss * 100) + '%', 'Kayıp: %' + Math.round(f.attLoss * 100)),
+      L('Treasure: ', 'Hazine: ') + fmt(cash) + ' 💵 · ' + fmt(iron) + ' ⚔️ · +' + F.stars + ' ⭐', L('Permanent bonus: ', 'Kalıcı bonus: ') + F.desc,
+      tile.fort < FORTS.length ? L('Next: ' + FORTS[tile.fort].name + ' is open', 'Sıradaki: ' + FORTS[tile.fort].name + ' açıldı') : L('All fortresses have fallen!', 'Bütün kaleler düştü!')], battle);
+    A.toast('🏰 ' + L(tile.name + ' has fallen! +' + F.stars + ' ⭐', tile.name + ' düştü! +' + F.stars + ' ⭐'));
+    back(m, surv, cash, iron);
+    dirty = true;
   }
   function back(m, troops, cash, iron) {
     if (!count(troops)) return;
@@ -452,19 +524,26 @@
       G().townBoostUntil = Math.min(now() + 2 * 3600e3, Math.max(now(), G().townBoostUntil) + 15 * 60e3);
       A.toast(L('⚡ Construction and training 2x faster for 15 minutes!', '⚡ 15 dakika inşaat ve eğitim 2x hızlı!')); A.save(); dirty = true;
     },
-    // Rewarded ad: the training queue of one building jumps ahead by a quarter of what is left (15 min - 2 h).
+    abandonOasis(arg) {
+      const v = V(), i = +arg, o = v.oases[i], slot = slotOf('main');
+      if (!o) return;
+      if (abandonAsk !== i) { abandonAsk = i; if (slot >= 0) openBuilding(slot); return; }
+      abandonAsk = -1; v.oases.splice(i, 1);
+      A.toast('🌴 ' + OASIS[o.kind].name + L(' abandoned: the slot is free for a new oasis', ' terk edildi: yeni bir vaha için yer açıldı')); A.save(); dirty = true;
+      if (slot >= 0) openBuilding(slot);
+    },
+    // Rewarded ad: the troops this building would train in the next quarter of the queue (15 min - 2 h) arrive right away.
+    // The queue is sequential, so pulling every batch earlier by the same amount hands those units over and keeps the rest at its pace.
     async trainAd(b) {
       const v = V();
       if (!v.trainQ.some(q => TROOPS[q.t].b === b)) return;
       if (!(await Ads.rewarded('maden_train_skip'))) { A.toast(L('Ad not completed', 'Reklam tamamlanmadı')); return; }
       const qs = v.trainQ.filter(q => TROOPS[q.t].b === b), end = Math.max(...qs.map(q => q.next + (q.n - 1) * q.per)), cut = Math.max(15 * 60e3, Math.min(2 * 3600e3, (end - now()) * 0.25));
-      // Spread the cut over the queue: every unit's finish time moves earlier by the same share.
-      const f = Math.max(0, 1 - cut / Math.max(1, end - now()));
-      // Scale the whole timeline towards now (a sequential rebuild gave the saved time back to later batches).
-      const t0 = now();
-      for (const q of qs) { q.next = t0 + Math.max(0, q.next - t0) * f; q.per *= f; }
+      const left = () => qs.reduce((a, q) => a + q.n, 0), before = left();
+      for (const q of qs) q.next -= cut;
       tick(0);
-      A.toast(L('⏩ Training cut by ' + dur(cut), '⏩ Eğitim ' + dur(cut) + ' kısaldı')); A.save(); dirty = true;
+      const got = before - left();
+      A.toast(L('⏩ ' + got + ' troops arrived (' + dur(cut) + ' of training)', '⏩ ' + got + ' asker hemen geldi (' + dur(cut) + ' eğitim)')); A.save(); dirty = true;
       const i = slotOf(b); if (i >= 0) openBuilding(i);
     },
     train(arg) {
@@ -489,6 +568,8 @@
       const v = V(), tr = {};
       for (const k in send.tr) if (send.tr[k] > 0) tr[k] = Math.min(send.tr[k], v.troops[k] || 0);
       if (type === 'found') { tr.kolonici = 3; if ((v.troops.kolonici || 0) < 3) { A.toast(L('3 settlers needed', '3 kolonici gerekli')); return; } }
+      const ft = world().tiles[send.key];
+      if (ft && ft.fort && (ft.fallen || !fortOpen(ft.fort) || type === 'conquer')) { A.toast(L('This fortress cannot be attacked now', 'Bu kaleye şu an saldırılamaz')); return; }
       if (type === 'conquer' && !(tr.senator > 0)) { A.toast(L('Pick at least 1 senator to conquer', 'Fetih için en az 1 senatör seç')); return; }
       if (!count(tr)) { A.toast(L('Pick troops', 'Birlik seç')); return; }
       if (!lvlOf('rally')) { A.toast(L('Build a Rally Point first', 'Önce Toplanma Alanı kur')); return; }
@@ -584,14 +665,24 @@
         const end = Math.max(...qs.map(x => x.next + (x.n - 1) * x.per));
         h += '<div class="tq"><p class="tql">' + L('⏳ Training queue', '⏳ Eğitim kuyruğu') + ' · ' + L('all done in ', 'tümü ') + '<b data-until="' + end + '"></b></p>' +
           qs.map(x => { const p = Math.max(0, Math.min(1, 1 - (x.next - now()) / x.per)); return '<div class="tqi"><span>' + TROOPS[x.t].icon + ' ' + fmt(x.n) + '× ' + TROOPS[x.t].name + '</span><i class="tqb"><i style="width:' + Math.round(p * 100) + '%"></i></i><b data-until="' + x.next + '"></b></div>'; }).join('') + '</div>' +
-          '<button class="btn purple" data-act="trainAd" data-arg="' + s.t + '"><span class="ad-ico">AD</span>' + L('⏩ Cut the remaining time: −', '⏩ Kalan süreyi kısalt: −') + dur(Math.max(15 * 60e3, Math.min(2 * 3600e3, (end - now()) * 0.25))) + '</button>';
+          '<button class="btn purple" data-act="trainAd" data-arg="' + s.t + '"><span class="ad-ico">AD</span>' + L('⏩ Get troops now: ', '⏩ Askerleri hemen al: ') + dur(Math.max(15 * 60e3, Math.min(2 * 3600e3, (end - now()) * 0.25))) + '</button>';
       }
     }
     if (s.t === 'rally') h += rallyHtml(k);
     if (s.t === 'pazar') h += caravanHtml(k);
+    if (s.t === 'main') h += oasesHtml(k);
     A.panel(h + '<button class="btn gray small" data-act="close">' + L('Close', 'Kapat') + '</button>');
   }
   // Rally point: incoming, outgoing and home troops of village k (Travian's troop overview).
+  // Main Building: the village's linked oases, each can be given up to free its slot for another one (asks once before it goes).
+  let abandonAsk = -1;
+  function oasesHtml(k) {
+    const v = V(k);
+    if (!v.oases.length) return '';
+    return '<div class="tq"><p class="tql">' + L('🌴 Oases of this village', '🌴 Bu köyün vahaları') + ' · ' + v.oases.length + '/' + oasisSlots(k) + '</p>' +
+      v.oases.map((o, i) => '<div class="upg"><div><b>' + OASIS[o.kind].icon + ' ' + OASIS[o.kind].name + '</b><br><small>' + o.x + '|' + o.y + ' · ' + OASIS[o.kind].desc + '</small></div>' +
+        '<button class="btn small ' + (abandonAsk === i ? 'red' : 'gray') + '" data-act="abandonOasis" data-arg="' + i + '">' + (abandonAsk === i ? L('✔ Sure?', '✔ Emin misin?') : L('Abandon', 'Terk et')) + '</button></div>').join('') + '</div>';
+  }
   function rallyHtml(k) {
     const v = V(k), ms = (G().moves || []).slice().sort((a, b) => a.at - b.at);
     const place = m => { const t = world().tiles[m.x + ',' + m.y]; return t ? (t.type === 'npc' ? t.name : OASIS[t.kind].name) + ' (' + m.x + '|' + m.y + ')' : m.x + '|' + m.y; };
@@ -647,6 +738,19 @@
     send = { x, y, tr: {}, key };
     openSend();
   }
+  function fortHtml(t, x, y, dist) {
+    const F = FORTS[t.fort - 1], trophy = G().trophy || {};
+    let h = '<p class="t-lg">' + (t.fallen ? '🏳️ ' : '🏰 ') + t.name + '</p><span class="chip">' + L('Barbarian fortress ', 'Barbar kalesi ') + t.fort + '/' + FORTS.length + ' · ' + x + '|' + y + ' · ' + dist.toFixed(1) + L(' tiles', ' kare') + '</span>';
+    if (t.fallen) h += '<p class="sub">' + L('🏳️ Fallen. Permanent bonus: ', '🏳️ Düştü. Kalıcı bonus: ') + '<b>' + F.desc + '</b></p>';
+    else {
+      h += '<p class="sub">' + L('Garrison ', 'Garnizon ') + troopsTxt(t.def) + '<br>' + L('Defense ~', 'Savunma ~') + fmt(sum(t.def, u => (u.di + u.dc) / 2) * Math.pow(1.04, t.wall)) + L(' · Wall ', ' · Sur ') + t.wall + '</p>' +
+        '<div class="loot">' + L('🏆 If it falls: ', '🏆 Düşürürsen: ') + '<b>' + F.hours + L(' hours of income + iron + ', ' saatlik gelir + demir + ') + F.stars + ' ⭐</b><br>' + L('✨ Permanent bonus: ', '✨ Kalıcı bonus: ') + '<b>' + F.desc + '</b><br><small>' + L('A lost attack still kills part of the garrison; it refills slowly (0.3%/min). Rams break the wall.', 'Kaybedilen saldırı da garnizonun bir kısmını öldürür; kale yavaş toparlanır (dakikada %0,3). Koçbaşı suru yıkar.') + '</small></div>';
+      if (!fortOpen(t.fort)) h += '<p class="tip">🔒 ' + L('Bring down ' + FORTS[t.fort - 2].name + ' first.', 'Önce ' + FORTS[t.fort - 2].name + ' düşmeli.') + '</p>';
+    }
+    const won = Object.keys(trophy).filter(k => trophy[k] > 0);
+    if (won.length) h += '<p class="tip">' + L('Your fortress bonuses: ', 'Kale bonusların: ') + won.map(k => OASIS[k].icon + ' +' + Math.round(trophy[k] * 100) + '%').join(' · ') + '</p>';
+    return h;
+  }
   function openSend() {
     const { x, y, key } = send, w = world(), t = w.tiles[key], v = V(), dist = Math.hypot(x - v.x, y - v.y), bio = A.REGIONS[biomeAt(x, y)];
     if (t) regen(t);
@@ -659,7 +763,8 @@
         '<div class="loot">' + L('✨ If you capture it: ', '✨ Fethedersen: ') + '<b>' + OASIS[t.kind].desc + '</b><br><small>' + L('The bonus works for the village you link it to (this one: ' + v.name + '). Oases of the same kind stack.', 'Bonus, vahayı bağladığın köyün kendisine işler (bu köy: ' + v.name + '). Aynı türden birden fazla vaha üst üste eklenir.') + '</small></div>' +
         (own >= 0 ? '<p class="sub">' + L('🔗 Linked to ' + V(own).name + '.', '🔗 ' + V(own).name + ' köyüne bağlı.') + '</p>'
           : '<p class="sub">' + L('🐺 Wild animals · power ~', '🐺 Vahşi hayvanlar · güç ~') + fmt(animals) + (animals < 1 ? L(' (cleared, can be linked now)', ' (temizlendi, hemen bağlanabilir)') : '') + '<br>' + L('🏯 Oasis slots: ', '🏯 Vaha hakkın: ') + used + '/' + slots + (used >= slots ? L(' · upgrade the Residence (+1 slot every 5 levels)', ' · Köşk\'ü yükselt (her 5 seviye +1 hak)') : '') + '</p>');
-    } else h = '<p class="t-lg">🛖 ' + t.name + '</p><span class="chip">' + L('Barbarian village · size ', 'Barbar köyü · büyüklük ') + t.s + ' · ' + dist.toFixed(1) + L(' tiles', ' kare') + '</span>' +
+    } else if (t.fort) h = fortHtml(t, x, y, dist);
+    else h = '<p class="t-lg">🛖 ' + t.name + '</p><span class="chip">' + L('Barbarian village · size ', 'Barbar köyü · büyüklük ') + t.s + ' · ' + dist.toFixed(1) + L(' tiles', ' kare') + '</span>' +
       '<p class="sub">' + L('Defense ~', 'Savunma ~') + fmt(sum(t.def, u => (u.di + u.dc) / 2) * Math.pow(1.04, t.wall)) + L(' · Wall ', ' · Sur ') + t.wall + L(' · Loyalty ' + Math.round(t.loyal) + '%', ' · Sadakat %' + Math.round(t.loyal)) + L(' · Loot ~', ' · Ganimet ~') + Math.round(Math.min(t.stash, stashCap(t))) + '/' + stashCap(t) + L(' min of income (refills slowly)', ' dk gelir (yavaş dolar)') + '</p>';
     const home = Object.keys(TROOPS).filter(k => (v.troops[k] || 0) > 0 && k !== 'kolonici');
     if (t || true) {
@@ -678,9 +783,11 @@
         (paid > 0 ? '<br><small>' + L('This army cost ≈ ' + (paid < 1 ? Math.round(paid * 60) + ' s' : paid.toFixed(1) + ' min') + ' of income: one good raid can bring back ' + Math.max(1, Math.round(carry / paid)) + 'x that.', 'Bu ordunun maliyeti ≈ ' + (paid < 1 ? Math.round(paid * 60) + ' sn' : paid.toFixed(1) + ' dk') + ' gelirdi: tek başarılı yağma ' + Math.max(1, Math.round(carry / paid)) + ' katını getirebilir.') + '</small>' : '') + '</div>';
     }
     if (!t) h += '<button class="btn gold" data-act="sendGo" data-arg="found">' + L('🧑‍🌾 Found village (3 settlers · at home ', '🧑‍🌾 Köy kur (3 kolonici · evde ') + (v.troops.kolonici || 0) + ')</button>';
-    else {
+    else if (t.fort) {
+      if (!t.fallen && fortOpen(t.fort)) h += '<button class="btn red" data-act="sendGo" data-arg="attack">' + L('⚔️ Attack the fortress', '⚔️ Kaleye saldır') + '</button>';
+    } else {
       h += '<button class="btn red" data-act="sendGo" data-arg="attack">' + L('⚔️ Attack / Raid', '⚔️ Saldır / Yağmala') + '</button>';
-      if (t.type === 'npc') h += '<button class="btn purple" data-act="sendGo" data-arg="conquer">' + L('🎖️ Conquer (with senator)', '🎖️ Fethet (senatörle)') + '</button>';
+      if (t.type === 'npc') h +='<button class="btn purple" data-act="sendGo" data-arg="conquer">' + L('🎖️ Conquer (with senator)', '🎖️ Fethet (senatörle)') + '</button>';
     }
     A.panel(h + '<button class="btn gray small" data-act="close">' + L('Close', 'Kapat') + '</button>');
   }
@@ -736,13 +843,14 @@
   function renderMap(el) {
     const w = world(), v = V(), k = G().cur;
     const old = el.querySelector && el.querySelector('.wscroll'), keep = old && mapFor === k ? [old.scrollLeft, old.scrollTop] : null;
-    let h = '<div class="vhead" style="--c1:#4a44b8;--c2:#1b1464"><b>' + L('🗺️ World Map', '🗺️ Dünya Haritası') + '</b><small>' + L('Drag to explore · 👑 capital · 🏠 your village · 🛖 barbarians · 🌴⛰️🌬️💎⛏️ oasis · found villages on empty tiles', 'Sürükleyerek gez · 👑 başkent · 🏠 köyün · 🛖 barbar · 🌴⛰️🌬️💎⛏️ vaha · boş kareye köy kur') + '</small>' +
+    let h = '<div class="vhead" style="--c1:#4a44b8;--c2:#1b1464"><b>' + L('🗺️ World Map', '🗺️ Dünya Haritası') + '</b><small>' + L('Drag to explore · 👑 capital · 🏠 your village · 🛖 barbarians · 🏰 fortress · 🌴⛰️🌬️💎⛏️ oasis · found villages on empty tiles', 'Sürükleyerek gez · 👑 başkent · 🏠 köyün · 🛖 barbar · 🏰 kale · 🌴⛰️🌬️💎⛏️ vaha · boş kareye köy kur') + '</small>' +
       '<div class="row" style="gap:6px;margin-top:6px"><button class="btn small" data-act="mapHome">🏠 ' + v.name + ' (' + v.x + '|' + v.y + ')</button></div></div>' +
       '<div class="wscroll"><div class="wmap2" style="grid-template-columns:repeat(' + (2 * WORLD_R + 1) + ',' + (TILE - 2) + 'px)">';
     for (let y = -WORLD_R; y <= WORLD_R; y++) for (let x = -WORLD_R; x <= WORLD_R; x++) {
       const key = x + ',' + y, t = w.tiles[key], vk = villageAt(x, y), bio = A.REGIONS[vk >= 0 ? V(vk).b || 0 : biomeAt(x, y)];
       let icon = '', cls = '';
       if (vk >= 0) { icon = vk === 0 ? '👑' : '🏠'; cls = vk === k ? ' me' : ' own'; }
+      else if (t && t.fort) { icon = t.fallen ? '🏳️' : '🏰'; cls = ' npc fort' + (t.fallen ? ' down' : fortOpen(t.fort) ? ' open' : ''); }
       else if (t && t.type === 'npc') { icon = '🛖'; cls = ' npc'; }
       else if (t) { icon = OASIS[t.kind].icon; cls = oasisOwner(x, y) >= 0 ? ' own' : ' oasis'; }
       h += '<button class="wt2' + cls + '" style="background:' + bio.card[0] + '" data-act="tile" data-arg="' + key + '">' + icon + (x % 5 === 0 && y % 5 === 0 ? '<small>' + x + '|' + y + '</small>' : '') + '</button>';
@@ -795,5 +903,6 @@
     lvlOf, cashBuildings, oasisMul, buildingCount: k => V(k).slots.filter(Boolean).length,
     renderVillage, renderMap, updateTimers, frame,
     isDirty: () => dirty, markDirty() { dirty = true; },
+    _t: { world, arrive, fortOpen, FORTS, G: () => A.G }, // test hook (tests/fort-test)
   };
 })();

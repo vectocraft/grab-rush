@@ -21,7 +21,7 @@
       const autoQ = () => {
         const now = performance.now(), d = now - aq.last; aq.last = now;
         if (d > 0 && d < 250) { aq.acc += d; aq.n++; }
-        if (aq.acc > 2500) { const avg = aq.acc / aq.n; aq.acc = aq.n = 0; if (avg > 20 && aq.pr > 1) { aq.pr = Math.max(1, aq.pr - 0.25); renderer.setPixelRatio(aq.pr); } }
+        if (aq.acc > 2500) { const avg = aq.acc / aq.n; aq.acc = aq.n = 0; if (avg > 17.8 && aq.pr > 1) { /* under ~56 fps (was 50: a phone at 52 fps never stepped down) */ aq.pr = Math.max(1, aq.pr - 0.25); renderer.setPixelRatio(aq.pr); } }
       };
       renderer.shadowMap.enabled = true;
       renderer.shadowMap.type = T.PCFSoftShadowMap;

@@ -1,0 +1,45 @@
+workflows:
+  ios-testflight:
+    name: Grab Rush iOS TestFlight
+    instance_type: mac_mini_m2
+    max_build_duration: 60
+    integrations:
+      app_store_connect: vectocraft_asc
+    environment:
+      groups:
+        - vectocraft_signing # Secret CERTIFICATE_PRIVATE_KEY for distribution signing
+      node: 22
+      xcode: latest
+      vars:
+        BUNDLE_ID: com.ugenis.kapiskapis
+    scripts:
+      - name: Install locked dependencies
+        script: npm ci
+      - name: Build web assets
+        script: npm run build
+      - name: Sync iOS (Swift Package Manager)
+        script: npx cap sync ios
+      - name: Generate iOS icons and splash screens
+        script: npm run assets:ios
+      - name: Set build number
+        script: |
+          cd ios/App
+          agvtool new-version -all $(($BUILD_NUMBER + 100))
+      - name: Automatic App Store signing
+        script: |
+          set -e
+          keychain initialize
+          app-store-connect fetch-signing-files "$BUNDLE_ID" --type IOS_APP_STORE --create
+          keychain add-certificates
+          xcode-project use-profiles
+      - name: Build IPA
+        script: xcode-project build-ipa --project ios/App/App.xcodeproj --scheme App
+    artifacts:
+      - build/ios/ipa/*.ipa
+      - /tmp/xcodebuild_logs/*.log
+      - $HOME/Library/Developer/Xcode/DerivedData/**/Build/**/*.dSYM
+    publishing:
+      app_store_connect:
+        auth: integration
+        submit_to_testflight: true
+        submit_to_app_store: false

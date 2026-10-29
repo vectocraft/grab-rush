@@ -49,7 +49,7 @@
     [{ n: L('Caveman', 'Mağara Adamı') }, { n: L('Slinger', 'Sapancı'), shot: 'stone' }, { n: L('Dino Rider', 'Dino Binici') }],
     [{ n: L('Hoplite', 'Hoplit') }, { n: L('Javelin Thrower', 'Mızrak Atıcı'), shot: 'javelin' }, { n: L('Chariot', 'Savaş Arabası') }],
     [{ n: L('Swordsman', 'Kılıççı') }, { n: L('Crossbowman', 'Arbaletçi'), shot: 'bolt' }, { n: L('Knight', 'Şövalye') }],
-    [{ n: L('Bayonet', 'Süngü Eri') }, { n: L('Musketeer', 'Tüfekçi'), shot: 'bullet' }, { n: L('Cannon', 'Top'), shot: 'ball', range: 150, splash: 26 }],
+    [{ n: L('Bayonet', 'Süngü Eri') }, { n: L('Musketeer', 'Tüfekçi'), shot: 'bullet' }, { n: L('Cannon', 'Top'), shot: 'ball', range: 115, splash: 20 }],
     [{ n: L('Flamethrower', 'Alev Makinesi'), shot: 'flame', range: 52 }, { n: L('Rifleman', 'Piyade'), shot: 'bullet' }, { n: L('Tank', 'Tank'), shot: 'shell', range: 140, splash: 30 }],
     [{ n: L('Shotgunner', 'Pompalı Asker'), shot: 'bullet', range: 56 }, { n: L('Sniper', 'Keskin Nişancı'), shot: 'bullet', range: 170 }, { n: L('Battle Tank', 'Muharebe Tankı'), shot: 'shell', range: 150, splash: 34 }],
     [{ n: L('Robot', 'Robot') }, { n: L('Laser Trooper', 'Lazer Robotu'), shot: 'laser' }, { n: L('Mech', 'Dev Mech'), shot: 'plasma', range: 150, splash: 36 }],
@@ -131,7 +131,7 @@
       lv, t: 0, a0, units: [], shots: [], fx: [], texts: [], shake: 0, banner: null,
       side: [
         { gold: (startGoldAd ? 500 : 250) * g0, xp: 0, age: a0, hp: 0, max: 0, queue: [], qt: 0, slots: [null, null, null], open: a0 >= 2 ? 2 : 1, scd: 12, incMul: 1 + 0.15 * G.upgrades.income, dmg: 1 + 0.06 * G.upgrades.drill, bonus: 0.1 * G.upgrades.wall },
-        { gold: 250 * g0, xp: 0, age: a0, hp: 0, max: 0, queue: [], qt: 0, slots: [{ kind: 'rapid', age: a0, cd: 1 }, d >= 12 ? { kind: 'heavy', age: a0, cd: 2 } : null, null], open: 2, scd: 30, incMul: mul, dmg: 1 + Math.min(0.7, 0.03 * (d - 1)), hpMul: (1 + Math.min(0.7, 0.03 * (d - 1))) * (1 - e), bonus: (0.25 + 0.03 * Math.min(d - 1, 40)) * (1 - e), think: 1, forceAge: Math.max(80, 140 - d) },
+        { gold: 250 * g0, xp: 0, age: a0, hp: 0, max: 0, queue: [], qt: 0, slots: [{ kind: 'rapid', age: a0, cd: 1 }, d >= 12 ? { kind: 'heavy', age: a0, cd: 2 } : null, null], open: 2, scd: 30, incMul: mul, dmg: 1 + Math.min(1.0, 0.025 * (d - 1)), hpMul: (1 + Math.min(1.0, 0.025 * (d - 1))) * (1 - e), bonus: (0.25 + 0.03 * Math.min(d - 1, 40)) * (1 - e), think: 1, forceAge: Math.max(80, 140 - d) },
       ],
       reviveUsed: false, reinfUsed: false, powerUsed: false, powerT: 0,
     };
@@ -256,6 +256,9 @@
     const danger = myUnits.some(u => u.p > LANE * 0.55);
     if (danger) ai.waveLeft = Math.max(ai.waveLeft || 0, ai.queue.length < 3 ? 1 : 0);
     else if (!ai.waveLeft && ai.gold >= wave * avg * 0.85) ai.waveLeft = wave;
+    // Never idle: whatever the player does, the rival keeps 1-3 troops on the field (more at higher war levels).
+    const aiField = S.units.filter(u => u.side === 1 && !u.dead).length + ai.queue.length;
+    if (S.t > 4 && !ai.waveLeft && aiField < Math.min(3, 1 + Math.floor(warLv() / 15)) && ai.gold >= stat(ai.age, 0).cost) enqueue(1, Math.random() < 0.6 ? 0 : 1);
     if (ai.waveLeft > 0 && ai.queue.length < 5) {
       const heavyShare = myUnits.filter(u => u.type === 2).length / Math.max(1, myUnits.length), rangedShare = myUnits.filter(u => u.type === 1).length / Math.max(1, myUnits.length);
       const r = Math.random();

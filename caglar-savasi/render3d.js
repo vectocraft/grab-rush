@@ -402,7 +402,7 @@
         if (w === 'rockets') { // rocket pod: a block of tubes on the cannon base
           ex(head, 'weapon-cannon', S2 * 0.9, 0, 0, 0, 0, '#7a8a6a').visible = true;
           for (let i = 0; i < 4; i++) P(head, 'cyl', lam('#3a4030'), 1.6, 12, 1.6, (i % 2 - 0.5) * 4.4, 9 + Math.floor(i / 2) * 3.6, 2, Math.PI / 2 - 0.25);
-        } else ex(head, w, S2 * k, 0, 0, 0, Math.PI, wt);
+        } else ex(head, w, S2 * k, 0, 0, 0, 0, wt); // barrel along the head's +z, which aims at the target (was turned back toward its own base)
         g.userData.head = head; g.userData.ground = true; g.userData.ext = true;
         return g;
       }
@@ -630,7 +630,7 @@
           const time = performance.now() / 1000;
           // Adaptive resolution: slow phones (frames > 30 ms for a few seconds) drop the pixel ratio step by step.
           if (dt > 0) { perfAcc += dt; perfN++; if (perfAcc > 2.5) { const avg = perfAcc / perfN; perfAcc = 0; perfN = 0;
-            if (avg > 0.03 && pr > 1) { pr = Math.max(1, pr - 0.25); renderer.setPixelRatio(pr); renderer.setSize(W, H, false); } } }
+            if (avg > 0.0178 && pr > 1) { /* under ~56 fps (was 33) */ pr = Math.max(1, pr - 0.25); renderer.setPixelRatio(pr); renderer.setSize(W, H, false); } } }
           if (envAge !== S.side[0].age) buildEnv(info.ages[S.side[0].age], S.side[0].age);
           // Bases + turrets.
           for (let s = 0; s < 2; s++) {

@@ -571,10 +571,11 @@
     UI.exitApp();
   });
 
-  // V3 living background: light motes drifting up and two slow rays (CSS transform/opacity animations only).
+  // V3 living background: light motes drifting up (CSS transform/opacity animations only).
   try { const bg = document.querySelector('.hub-bg');
     if (bg && !(bg.children && bg.children.length)) {
-      let h = '<i class="hbr"></i>';
+      // No light-ray layer: a 90vmax masked layer measured ~10 points of janky frames on a mid-range phone (25 Oct).
+      let h = '';
       for (let i = 0; i < 6; i++) h += '<i class="hbm" style="left:' + (Math.random() * 100).toFixed(1) + '%;--s:' + (3 + Math.random() * 6).toFixed(1) + 'px;--t:' + (7 + Math.random() * 8).toFixed(1) + 's;--dl:' + (-Math.random() * 12).toFixed(1) + 's;--sx:' + (Math.random() * 80 - 40).toFixed(0) + 'px"></i>';
       bg.innerHTML = h;
     } } catch (e) { }
@@ -597,7 +598,7 @@
   render();
   setTimeout(render, 1500); // consent info / store prices arrive asynchronously
   // A newer version on Google Play (In-App Updates; Play installs only): offer it once per launch.
-  const AppUpd = window.Capacitor && Capacitor.isNativePlatform && Capacitor.isNativePlatform() && Capacitor.Plugins.AppUpdate;
+  const AppUpd = window.Capacitor && Capacitor.getPlatform && Capacitor.getPlatform() === 'android' && Capacitor.Plugins.AppUpdate;
   let updInfo = null, forceUpd = false, updSheet = '';
   if (AppUpd) setTimeout(async () => {
     try {

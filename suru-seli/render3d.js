@@ -1145,7 +1145,7 @@
           perf.acc += dt; perf.n++;
           if (perf.acc > 2.5) {
             const avg = perf.acc / perf.n;
-            if (avg > 1 / 45 && pixelRatio > 1) { pixelRatio = Math.max(1, pixelRatio - 0.25); renderer.setPixelRatio(pixelRatio); R.fit(); }
+            if (avg > 1 / 56 && pixelRatio > 1) { /* under ~56 fps (was 45) */ pixelRatio = Math.max(1, pixelRatio - 0.25); renderer.setPixelRatio(pixelRatio); R.fit(); }
             // Still slow at the lowest resolution: drop the purely decorative extras (filler marchers, lamp light pools,
             // half the effect particles). Gameplay visuals (soldiers, bullets, hits, gates) stay.
             else if (avg > 1 / 40 && pixelRatio <= 1 && !lowFx) { lowFx = true; lampPool.visible = false; fx.setBudget(200); }
