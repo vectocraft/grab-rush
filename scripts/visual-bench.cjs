@@ -33,6 +33,8 @@ const SCENES = {
   'arrow-ice': { url: 'arrow-legends/index.html#play', lang: 'tr', js: 'const A=window.__arrow; A.run(1, 3); Object.assign(A.S.skills,{ice:1,front:2,multi:1,spd:2}); A.S.auto=true; A.step(44);' },
   'arrow-skills': { url: 'arrow-legends/index.html#play', lang: 'tr', js: 'const A=window.__arrow; A.G.hero=\'mage\'; A.run(1, 3); Object.assign(A.S.skills,{orbit:2,frostaura:2,shield:1,poison:2,fire:1,hp:1,wisdom:1}); A.S.auto=true; A.step(44);' },
   'arrow-boss4': { url: 'arrow-legends/index.html#play', lang: 'tr', js: '(async()=>{LD await ld(4); await ld(7); const A=window.__arrow; A.run(4, 39); A.S.auto=true; A.step(70);})()'.replace('LD', 'const ld=n=>new Promise(r=>{if((ARROW_CHARS.loaded||{})[n])return r();const s=document.createElement(\'script\');s.src=\'chars-\'+n+\'.js\';s.onload=s.onerror=r;document.head.appendChild(s)});') },
+  // Creature detail (docs/GOREV-ARROW-DETAY.md): chapter-2 room with two elites close to the camera, the hero idle.
+  'arrow-foes': { url: 'arrow-legends/index.html#play', lang: 'tr', js: '(async()=>{LD await ld(2); const A=window.__arrow; A.run(2, 3); A.spawn(A.S.enemies[0].kind, -3, 4, { elite: true }); A.spawn(A.S.enemies[1].kind, 3.5, 3, { elite: true }); A.S.auto=true; A.step(20);})()'.replace('LD', 'const ld=n=>new Promise(r=>{if((ARROW_CHARS.loaded||{})[n])return r();const s=document.createElement(\'script\');s.src=\'chars-\'+n+\'.js\';s.onload=s.onerror=r;document.head.appendChild(s)});'), clip: { x: 0, y: 260, width: 540, height: 540 } },
   // V3: the hub and the other four games (generic timing: every requestAnimationFrame callback + main-thread busy %).
   'hub': { url: 'index.html', lang: 'tr' },
   'obur': { url: 'obur-delik/index.html#demo', lang: 'tr' },
@@ -103,6 +105,7 @@ function serve() {
     if (only && !only.split(',').includes(name)) continue;
     let o = await open(sc, { width: 540, height: 960 }, 2);
     await o.page.screenshot({ path: path.join(path.resolve(ROOT, outDir), name + '-' + tag + '.png') });
+    if (sc.clip) await o.page.screenshot({ path: path.join(path.resolve(ROOT, outDir), name + '-zoom-' + tag + '.png'), clip: sc.clip });
     const errs = o.errs; await o.ctx.close();
     o = await open(sc, { width: 393, height: 852 }, 1);
     const cdp = await o.ctx.newCDPSession(o.page);

@@ -1473,8 +1473,9 @@
     if (hudCache.hurt !== ha) { hudCache.hurt = ha; $('hurt').style.opacity = ha; }
     for (const e of S.enemies) {
       if (e.hp <= 0 || e.state === 'rise' || e.boss) continue;
-      const q = W2S(e.x, e.z, 2.9 * e.scale * (e.scale > 2 ? 1.2 : 1.5));
-      bar(q.x, q.y, 34, 4, e.hp / e.max, '#ff4d5a');
+      // Just above the drawn head (foes are drawn at ~0.6 of their old size; the 3D view knows the real height).
+      const top = R3 && R3.top ? R3.top(e) || 2.9 * e.scale * 0.9 : 0, q = W2S(e.x, e.z, top ? top + 0.45 : 2.9 * e.scale * (e.scale > 2 ? 1.2 : 1.5));
+      bar(q.x, q.y, 30, 4, e.hp / e.max, '#ff4d5a');
       // Status icons over the bar (Soul Knight / Archero): burning, frozen, shocked, poisoned.
       const ic = (e.burn > 0 ? '🔥' : '') + (e.slow > 0 ? '❄️' : '') + (e.shock > 0 ? '⚡' : '') + (e.psn > 0 ? '☠️' : '');
       if (ic) { const c = textImg(ic, 11, '#fff', 'rgba(0,0,0,.35)'); ctx.drawImage(c, q.x + 19, q.y + 2 - c.h / 2, c.w, c.h); }

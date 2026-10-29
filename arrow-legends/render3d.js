@@ -10,6 +10,8 @@
   const RW = 13, RH = 21;
   // Characters are drawn larger than their collision circles so they read well on a phone (bosses a bit less).
   const VS = s => s * (s > 2 ? 1.4 : 1.85); // drawn a bit bigger than the hit circle so faces and gear read
+  // Foes are drawn smaller than that (testers: they filled the room): normal ones 0.6, bosses 0.75. Hit circles unchanged.
+  const FOE_K = e => e && e.boss ? 0.75 : 0.6;
   const b64 = s => { const bin = atob(s), u = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) u[i] = bin.charCodeAt(i); return u.buffer; };
 
   // ---------- Assets ----------
@@ -320,18 +322,47 @@
       const RIM_GLSL = 'float rimK = pow(1.0 - abs(dot(normalize(normal), normalize(vViewPosition))), 2.6);\n' +
         '  gl_FragColor.rgb = mix(vec3(dot(gl_FragColor.rgb, vec3(0.299, 0.587, 0.114))), gl_FragColor.rgb, 1.22) + vec3(0.42, 0.72, 1.0) * rimK * 0.36;\n#include <dithering_fragment>';
       const charLook = m => { m.onBeforeCompile = sh => { sh.fragmentShader = sh.fragmentShader.replace('#include <dithering_fragment>', RIM_GLSL); }; m.customProgramCacheKey = () => 'charLook'; return m; };
+      // Creature detail (small foes read on a phone): richer colour, contact shading at the feet, a two-tone rim that
+      // is brighter from above (gold on elites, the crew colour on bosses), and a sharp toon highlight that makes dark
+      // glossy parts (eyes, shells) glint. One shared program; each foe's (already per-foe) material only carries
+      // its own uniform values, so no extra material, texture or draw call.
+      const FOE_RIM = new T.Color(0.42, 0.72, 1.0);
+      const FOE_GLSL = 'vec3 fc = gl_FragColor.rgb; float fl = dot(fc, vec3(0.299, 0.587, 0.114));\n' +
+        '  fc = clamp(mix(vec3(fl), fc, 1.38), 0.0, 1.0); fc = (fc - 0.5) * 1.08 + 0.52;\n' +
+        '  fc *= 0.6 + 0.4 * smoothstep(0.0, uFoeH * 0.32, vFoeY);\n' +
+        '  vec3 fN = normalize(normal), fV = normalize(vViewPosition);\n' +
+        '  float fr = pow(1.0 - abs(dot(fN, fV)), 2.2);\n' +
+        '  fc += uFoeRim * fr * uFoeRimK * (0.45 + 0.55 * clamp(fN.y * 0.5 + 0.6, 0.0, 1.0));\n' +
+        '  float sp = pow(max(dot(fN, normalize(normalize(vec3(-0.35, 0.8, 0.5)) + fV)), 0.0), 48.0);\n' +
+        '  fc += smoothstep(0.45, 0.6, sp) * (0.18 + 0.5 * (1.0 - fl));\n' +
+        '  gl_FragColor.rgb = fc;\n#include <dithering_fragment>';
+      const foeLook = m => {
+        m.userData.fu = { uFoeH: { value: 3 }, uFoeRim: { value: FOE_RIM.clone() }, uFoeRimK: { value: 0.55 } };
+        m.onBeforeCompile = function (sh) { // per material (the closure would point at the first one after clone())
+          Object.assign(sh.uniforms, this.userData.fu);
+          sh.vertexShader = 'varying float vFoeY;\n' + sh.vertexShader.replace('#include <project_vertex>', '#include <project_vertex>\n  vFoeY = (modelMatrix * vec4(transformed, 1.0)).y;');
+          sh.fragmentShader = 'uniform float uFoeH; uniform vec3 uFoeRim; uniform float uFoeRimK; varying float vFoeY;\n' + sh.fragmentShader.replace('#include <dithering_fragment>', FOE_GLSL);
+        };
+        m.customProgramCacheKey = () => 'foeLook'; return m;
+      };
+      // Foes are drawn at ~0.6 of the hero's scale: a slightly thinner, cooler ink line keeps their faces readable.
+      const foeOutlineMat = new T.MeshBasicMaterial({ color: 0x140a16, side: T.BackSide });
+      foeOutlineMat.onBeforeCompile = sh => { sh.vertexShader = sh.vertexShader.replace('#include <morphtarget_vertex>', '#include <morphtarget_vertex>\n  transformed += normal * 0.038;'); };
       function charMesh(name, scale, opts) {
         const u = window.ARROW_CHARS.chars[name];
-        const mat = charLook(opts ? new T.MeshToonMaterial(Object.assign({ map: charTex(u.tex), gradientMap: toonRamp }, opts)) : (charMats[u.tex] || (charMats[u.tex] = new T.MeshToonMaterial({ map: charTex(u.tex), gradientMap: toonRamp }))).clone());
+        const foe = opts === 'foe'; if (foe) opts = null;
+        const mat = (foe ? foeLook : charLook)(opts ? new T.MeshToonMaterial(Object.assign({ map: charTex(u.tex), gradientMap: toonRamp }, opts)) : (charMats[u.tex] || (charMats[u.tex] = new T.MeshToonMaterial({ map: charTex(u.tex), gradientMap: toonRamp }))).clone());
         if (mat.map && mat.map.anisotropy !== Math.min(8, maxAniso)) { mat.map.anisotropy = Math.min(8, maxAniso); const im = mat.map.image; if (im && (im.complete === undefined || (im.complete && im.naturalWidth))) mat.map.needsUpdate = true; }
         const m = new T.Mesh(charGeo(name), mat); m.scale.setScalar(scale || 1); m.castShadow = true;
         if (m.updateMorphTargets) m.updateMorphTargets();
         // Ink outline: the same morphing geometry pushed out along its normals, drawn back faces only.
-        const ol = new T.Mesh(m.geometry, outlineMat); ol.scale.copy(m.scale);
+        const ol = new T.Mesh(m.geometry, foe ? foeOutlineMat : outlineMat); ol.scale.copy(m.scale);
         if (ol.updateMorphTargets) ol.updateMorphTargets();
         ol.morphTargetInfluences = m.morphTargetInfluences; ol.raycast = () => {};
-        const sh = new T.Mesh(shadowGeo, shadowMat); sh.scale.setScalar(2.6 * (scale || 1)); sh.position.y = 0.05;
-        const g = new T.Group(); g.add(m, ol, sh); g.userData = { m };
+        const sh = new T.Mesh(shadowGeo, shadowMat); sh.scale.setScalar((foe ? 2.3 : 2.6) * (scale || 1)); sh.position.y = 0.05;
+        if (!m.geometry.boundingBox) m.geometry.computeBoundingBox();
+        const g = new T.Group(); g.add(m, ol, sh); g.userData = { m, hy: m.geometry.boundingBox.max.y * m.scale.y };
+        if (foe) mat.userData.fu.uFoeH.value = g.userData.hy;
         pose(m, 6, 6, 0);
         return g;
       }
@@ -695,6 +726,7 @@
         tmp.add(new T.Mesh(ICE.shell, ICE.shellM), new T.Mesh(ICE.cry, ICE.cryM), new T.Mesh(ICE.disc, ICE.discM), new T.Mesh(rigGeo.bone, new T.MeshLambertMaterial({ color: '#ffffff', emissive: '#222222' })),
           new T.Mesh(rigGeo.bub, new T.MeshLambertMaterial({ color: '#ffffff', transparent: true, opacity: 0.5 })), new T.Mesh(rigGeo.rock, new T.MeshLambertMaterial({ color: '#ffffff', flatShading: true })),
           new T.Mesh(rigGeo.cry, new T.MeshLambertMaterial({ color: '#ffffff', transparent: true, opacity: 0.9 })), new T.Mesh(rigGeo.cry, new T.MeshBasicMaterial(Object.assign({ map: glowTex, side: T.DoubleSide }, add))));
+        const fk = (S.enemies.find(e => !e.boss) || {}).kind; if (fk && window.ARROW_CHARS.chars[fk]) tmp.add(charMesh(fk, 1, 'foe')); // foe shader
         scene.add(tmp); frostRing(S.p.x, S.p.z, 0.01, 0.01); castRunes.get(0);
         const shown = [chargeS, powerS, ...speedS, bossAura].filter(o => o && !o.visible); shown.forEach(o => { o.visible = true; });
         const dv = dyn.visible; dyn.visible = true;
@@ -717,7 +749,7 @@
       }
       // ---------- V3: elite marks and per-species deaths ----------
       // Elites wear a spinning golden crown over the head and a golden rune ring at the feet (pooled, built once).
-      const eliteCrowns = pool(() => { const g = topPiece('crown'); g.scale.setScalar(2.4); return g; });
+      const eliteCrowns = pool(() => { const g = topPiece('crown'); g.scale.setScalar(1.7); return g; }), eliteG = [];
       const eliteRunes = pool(() => { const m = new T.Mesh(new T.PlaneGeometry(1, 1).rotateX(-Math.PI / 2), new T.MeshBasicMaterial(Object.assign({ map: F3 ? Fx3D.tex.rune() : glowTex, color: '#ffc83a', opacity: 0.85 }, add))); m.renderOrder = 2; return m; });
       // Death styles by species: skeletons fall apart into bones, slimes burst in a splash of goo, casters and
       // spirits evaporate into a rising violet mist, demons and dragons burst into embers.
@@ -1208,6 +1240,8 @@
         dbg: () => ({ room, scene, camera, renderer, T }), // test hook: scene access for headless checks
         is3D: true,
         fit() { const W = cssW = canvas.clientWidth || innerWidth, H = cssH = canvas.clientHeight || innerHeight; renderer.setSize(W, H, false); camera.aspect = W / H; camera.updateProjectionMatrix(); camKey = ''; },
+        // Height of a foe's drawn head (world units), so its HP bar sits just above it whatever its size and hop.
+        top(e) { const g = e && ents.get(e.key); return g ? g.position.y + g.userData.hy * g.scale.y + (e.elite ? 0.45 : 0) : 0; }, // elites: above the crown
         project(x, z, h) { v3.set(x, h || 0, z).project(camera); const W = cssW, H = cssH; return { x: (v3.x + 1) / 2 * W, y: (1 - v3.y) / 2 * H }; },
         setRoom(S, ch) { level = S; menuKey = ''; buildRoom(S, ch); freezeStatic(); if (F3 && !F3.warmed) { F3.warmed = true; F3.warm(S.p.x, 1.3, S.p.z); warmV2(S); } },
         setMenu(hero, ch, tint, dim, skin) { const k = hero + (tint || '') + (dim ? 'd' : '') + (skin ? skin.id : '') + ch.fog + (ch.th ? ch.th.wall + ch.th.fx : ''); if (k === menuKey) return; menuKey = k; level = null; buildMenu(hero, ch, tint, dim, skin); },
@@ -1321,7 +1355,7 @@
           const seen = new Set();
           const sync = (key, e, name, scale, isHero) => {
             let g = ents.get(key);
-            if (!g) { g = charMesh(name, VS(scale) * (isHero ? 1 : e && e.boss ? 0.75 : 0.6)); /* foes drawn about half their old size (testers: they filled the room); hit circles unchanged */ if (isHero && S.skin) dress(g, name, S.skin); if (!isHero && e.boss) { dress(g, name, bossLook(e)); bossRig(g, e); } if (isHero && S.heroTint) { g.userData.m.material.color.set(S.heroTint); g.userData.m.material.emissive && g.userData.m.material.emissive.set(S.heroTint).multiplyScalar(0.38); } dyn.add(g); ents.set(key, g); }
+            if (!g) { g = charMesh(name, VS(scale) * (isHero ? 1 : FOE_K(e)), isHero ? undefined : 'foe'); if (isHero && S.skin) dress(g, name, S.skin); if (!isHero && e.boss) { dress(g, name, bossLook(e)); bossRig(g, e); } if (isHero && S.heroTint) { g.userData.m.material.color.set(S.heroTint); g.userData.m.material.emissive && g.userData.m.material.emissive.set(S.heroTint).multiplyScalar(0.38); } dyn.add(g); ents.set(key, g); }
             seen.add(key);
             const m = g.userData.m;
             if (isHero) heroPose(m, e); else foePose(m, e);
@@ -1329,9 +1363,14 @@
             if (!isHero && e.state === 'rise') y = -2.6 * Math.max(0, e.st / 0.8);
             if (!isHero && e.state === 'dead') y = -Math.max(0, 0.45 - e.st) * 2;
             g.position.set(e.x, y, e.z); g.rotation.y = e.face;
-            // Creatures feel alive: a soft breathing squash, a springy pop when they rise, a squash when hit.
+            // Creatures feel alive: a soft breathing squash, a springy pop when they rise, a squash when hit, and a
+            // little hop and waddle on every step while walking (squash on landing, stretch at the top).
             if (!isHero) {
               let sy = 1 + 0.035 * Math.sin(e.anim * 0.9 + e.x * 3), sxz = 1 / Math.sqrt(sy);
+              const walk = e.moving && e.hp > 0 && e.state !== 'rise' && !e.boss, stp = e.anim * Math.PI / 2;
+              const hop = walk ? Math.abs(Math.sin(stp)) : 0, wb = g.userData.wb = (g.userData.wb || 0) + ((walk ? 1 : 0) - (g.userData.wb || 0)) * Math.min(1, dt * 10);
+              if (wb > 0.01) { g.position.y += hop * 0.09 * g.userData.hy * wb; sy *= 1 + (hop - 0.4) * 0.11 * wb; sxz *= 1 - (hop - 0.4) * 0.05 * wb; }
+              g.rotation.z = Math.sin(stp) * 0.075 * wb;
               if (e.state === 'rise') { const u = 1 - Math.max(0, e.st / 0.8); sy *= 0.6 + 0.4 * u + 0.15 * Math.sin(u * Math.PI); sxz *= 0.8 + 0.2 * u; }
               if (e.flash > 0) { const k = e.flash / 0.12; sy *= 1 - 0.14 * k; sxz *= 1 + 0.1 * k; }
               g.scale.set(sxz, sy, sxz);
@@ -1339,7 +1378,11 @@
             const mat = m.material, wind = !isHero && (e.state === 'wind' || e.state === 'aim');
             if (mat.emissive) mat.emissive.setRGB(e.flash > 0 ? 0.9 : e.burn > 0 ? 0.35 : wind ? 0.45 + 0.25 * Math.sin(time * 30) : 0, e.flash > 0 ? 0.9 : e.slow > 0 ? 0.25 : wind ? 0.05 : 0, e.flash > 0 ? 0.9 : e.slow > 0 ? 0.5 : 0);
             // V3 elite: a golden glow pulse (status colours and the hit flash win over it), crown and rune ring below.
-            if (!isHero && e.elite && e.hp > 0) { if (mat.emissive && !(e.flash > 0) && !wind && !(e.burn > 0) && !(e.slow > 0) && !(e.psn > 0)) { const k = 0.5 + 0.5 * Math.sin(time * 4 + e.x); mat.emissive.setRGB(0.22 + 0.14 * k, 0.15 + 0.1 * k, 0.02); } elites.push(e); }
+            if (!isHero && mat.userData.fu) { const fu = mat.userData.fu;
+              if (e.elite) { fu.uFoeRim.value.setRGB(1, 0.78, 0.25); fu.uFoeRimK.value = 0.5 + 0.2 * Math.sin(time * 4 + e.x); }
+              else if (e.boss) { const rc = e.rage ? '#ff2a2a' : CREW_C[(e.crew || 0) % 6]; if (g.userData.rim !== rc) { g.userData.rim = rc; fu.uFoeRim.value.set(rc); } fu.uFoeRimK.value = 0.6 + 0.2 * Math.sin(time * 2.5); }
+              else fu.uFoeRimK.value = 0.55; }
+            if (!isHero && e.elite && e.hp > 0) { if (mat.emissive && !(e.flash > 0) && !wind && !(e.burn > 0) && !(e.slow > 0) && !(e.psn > 0)) { const k = 0.5 + 0.5 * Math.sin(time * 4 + e.x); mat.emissive.setRGB(0.22 + 0.14 * k, 0.15 + 0.1 * k, 0.02); } elites.push(e); eliteG.push(g); }
             if (!isHero && !e.boss && e.state === 'dead' && !g.userData.died) { g.userData.died = true; speciesDeath(e); }
             // Boss look: glow pulse, headpiece and particles (a hit flash or a wind-up glow wins over the glow).
             if (!isHero && e.boss && e.hp > 0 && g.userData.skin && !(e.flash > 0) && !wind) skinFx(g, e.x, e.z, e.moving, dt, time);
@@ -1355,7 +1398,7 @@
             if (isHero) g.visible = !(e.inv > 0 && Math.floor(e.inv * 16) % 2);
             // Status effects you can see: burning foes flicker and shed flames and smoke, frozen ones turn blue and drip frost.
             if (!isHero && e.hp > 0) {
-              const hs = 1.6 * (scale || 1);
+              const hs = 1.6 * (scale || 1) * FOE_K(e); // effect spread follows the drawn (shrunk) body
               if (e.burn > 0) {
                 if (mat.emissive && !(e.flash > 0)) mat.emissive.setRGB(0.55 + 0.3 * Math.sin(time * 22 + e.x), 0.18 + 0.1 * Math.sin(time * 17), 0);
                 for (let k = 0; k < 3; k++) if (Math.random() < dt * 40) emit(flamesC, e.x + rnd(-0.45, 0.45) * hs, rnd(0.2, 1.4) * hs, e.z + rnd(-0.45, 0.45) * hs, rnd(-0.5, 0.5), rnd(2.5, 5), rnd(-0.5, 0.5), rnd(0.3, 0.6), Math.random() < 0.6 ? '#ff5a10' : '#ffc23a', -4);
@@ -1443,12 +1486,12 @@
             const bossOn = !!ps.giant && S.enemies.some(e => e.boss && e.hp > 0);
             giantS.visible = bossOn; if (bossOn) { giantS.position.set(hx + Math.sin(S.p.face - 0.6) * 0.9, 1.6, hz + Math.cos(S.p.face - 0.6) * 0.9); giantS.scale.setScalar(1.5 + 0.3 * Math.sin(time * 12)); if (Math.random() < dt * 14) emit(flamesC, giantS.position.x, 1.6, giantS.position.z, 0, rnd(1, 2), 0, 0.3, '#ff5a2a', -2); }
           }
-          nRune = 0; elites.length = 0;
+          nRune = 0; elites.length = 0; eliteG.length = 0;
           S.enemies.forEach(e => { if (!e.key) e.key = 'e' + (++uid); sync(e.key, e, e.kind, e.scale, false); });
           elites.forEach((e, i) => {
-            const hs = 1.6 * (e.scale || 1), c = eliteCrowns.get(i), r = eliteRunes.get(i);
-            c.position.set(e.x, 2.15 * hs + 0.15 * Math.sin(time * 3 + i), e.z); c.rotation.y = time * 1.5;
-            r.position.set(e.x, 0.1, e.z); r.rotation.y = -time * 0.9; r.scale.setScalar((e.r || 1) * 3.2 * (1 + 0.05 * Math.sin(time * 5)));
+            const g = eliteG[i], hs = 1.6 * (e.scale || 1) * FOE_K(e), c = eliteCrowns.get(i), r = eliteRunes.get(i);
+            c.position.set(e.x, g.position.y + g.userData.hy * g.scale.y - 0.12 + 0.06 * Math.sin(time * 3 + i), e.z); // worn on the head c.rotation.y = time * 1.5;
+            r.position.set(e.x, 0.1, e.z); r.rotation.y = -time * 0.9; r.scale.setScalar((e.r || 1) * 2.5 * (1 + 0.05 * Math.sin(time * 5)));
             if (F3 && Math.random() < dt * 6) F3.mote(e.x + rnd(-0.8, 0.8), rnd(0.2, 1.6) * hs, e.z + rnd(-0.8, 0.8), Math.random() < 0.6 ? '#ffd23f' : '#fff3b0', 0.3, 1, 1.4);
           });
           eliteCrowns.hide(elites.length); eliteRunes.hide(elites.length);
